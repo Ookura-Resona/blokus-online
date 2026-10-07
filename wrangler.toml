@@ -13,6 +13,21 @@ main = "worker/index.js"
 # 用较新的兼容日期以启用当前默认行为
 compatibility_date = "2025-01-01"
 
+# ── 自定义域名 ──────────────────────────────────────────────
+# 为什么需要它：`*.workers.dev` 在中国大陆被 DNS 投毒 + TLS SNI 阻断
+# （实测：解析回 Facebook 的 IP；带 workers.dev SNI 的 TLS 握手被 RST），
+# 所以那个默认地址国内打不开。换成自己的域名就绕开了 —— 阻断是按域名做的。
+#
+# 前置条件：
+#   1) 域名已加到 Cloudflare 账号，且 NS 已改到 Cloudflare（状态变 Active）
+#   2) 在域名注册商处完成实名认证（国内域名要求，否则会是 serverHold）
+# 满足后 `wrangler deploy` 会自动创建对应的 DNS 记录并签发证书，不用手工加记录。
+#
+# 如果这个域名还没准备好，把下面两行注释掉也能正常部署到 workers.dev。
+routes = [
+  { pattern = "blokus.ookura-resona.xyz", custom_domain = true },
+]
+
 # 注意：这里**不需要** nodejs_compat。
 # shared/rooms.js 已经去掉了所有 node: 依赖（只用 globalThis.crypto），
 # 所以整个 Worker 侧没有任何 Node 内置模块。
