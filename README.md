@@ -39,59 +39,91 @@ HOST=127.0.0.1 PORT=8080 node server/index.js
 
 ---
 
-## 二、怎么发到群里让大家都进来
+## 二、怎么让它上线
+
+先说清楚一件事，因为这决定了你该选哪个：
+
+| | 谁在跑服务 | 你的电脑关了还能玩吗 |
+|---|---|---|
+| **场景 A** 同一 WiFi | 你的电脑 | ❌ 不能 |
+| **场景 C** 内网穿透 | 你的电脑 + 一条隧道 | ❌ 不能（隧道随进程一起断） |
+| **场景 B** 云服务器 | 服务器 | ✅ 能 |
+| **场景 D** Render 托管 | Render | ✅ 能 |
+
+**想要「不依赖任何自己的设备、一直在线」，就得走 B 或 D。**
+A 和 C 都只是「你自己电脑当服务器」，区别只是别人怎么连进来。
 
 房间是**房间号制**的。创建房间后点「分享邀请链接」，会得到这样的链接：
 
 ```
-http://你的地址:3000/?r=A7KQ
+https://你的地址/?r=A7KQ
 ```
 
 **任何人点开就直接在这个房间里**（没存过昵称的话，填个昵称点一下「加入」即可）。
-分享链接这件事在手机上会用系统原生分享面板，可以直接甩进微信/QQ 群。
+在 HTTPS 下分享会调起手机系统原生的分享面板，可以直接甩进微信/QQ 群
+（纯 HTTP 下浏览器禁用 `navigator.share`，程序会降级成手动复制，能用但不够顺手）。
 
-### 场景 A：大家在一起 / 同一个 WiFi（最简单）
+### 场景 A：大家在一起 / 同一个 WiFi（最简单，但要开着电脑）
 
-电脑上 `npm start`，把 `http://<局域网IP>:3000/?r=房号` 发到群里。
+```bash
+npm start
+```
+
+把 `http://<局域网IP>:3000/?r=房号` 发到群里。
 局限：手机必须和这台电脑在同一个 WiFi 下；电脑不能关。
 
-### 场景 B：有一台公网服务器（推荐给"发群里给不在身边的人"）
+> 如果手机打不开，八成是 Windows 防火墙。管理员 PowerShell：
+> ```powershell
+> netsh advfirewall firewall add rule name="Blokus 3000" dir=in action=allow protocol=TCP localport=3000
+> ```
+> 另外 `10.x` / `192.168.x` 这类网络如果开了「AP 隔离」，手机和电脑也互相连不通。
 
-任意一台有公网 IP 的 Linux 云主机，装好 Node 18+：
+### 场景 B：云服务器（**推荐：真正不依赖你的设备**）
 
-```bash
-# 1. 把整个 Blokus 目录传上去，例如
-scp -r Blokus user@your-server:/opt/blokus
+任意一台有公网 IP 的 Linux 机器（国内云厂商的轻量服务器、Oracle 永久免费实例都行）。
 
-# 2. 直接跑
-cd /opt/blokus
-PORT=3000 node server/index.js
-```
-
-想让它常驻，用 systemd（`/etc/systemd/system/blokus.service`）：
-
-```ini
-[Unit]
-Description=Blokus Online
-After=network.target
-
-[Service]
-Type=simple
-WorkingDirectory=/opt/blokus
-ExecStart=/usr/bin/node server/index.js
-Environment=PORT=3000
-Restart=always
-User=www-data
-
-[Install]
-WantedBy=multi-user.target
-```
+**方式一：Docker Compose（最省事，自带 HTTPS）**
 
 ```bash
-sudo systemctl daemon-reload && sudo systemctl enable --now blokus
+# 在有公网 IP、域名已解析到它的服务器上
+git clone <你的仓库> blokus && cd blokus
+echo "BLOKUS_DOMAIN=blokus.example.com" > .env
+docker compose up -d
 ```
 
-想要 `https://` 和域名，前面挂一层 Nginx（**一定要带上 WebSocket 升级头**，否则连不上）：
+就这样。Caddy 会自动申请并续期 Let's Encrypt 证书，
+**而且它默认就会正确转发 WebSocket 升级** —— 不用像 Nginx 那样手写 `Upgrade` 头。
+
+没有域名只想用 IP + 端口：
+
+```bash
+docker compose up -d blokus     # 然后访问 http://<服务器IP>:3000
+```
+
+**方式二：不用 Docker，直接用 systemd（脚本全自动）**
+
+```bash
+scp -r Blokus user@your-server:/tmp/blokus
+ssh user@your-server
+cd /tmp/blokus && sudo bash deploy/vps-setup.sh
+```
+
+这个脚本会：装 Node 22（如果太旧）→ 建一个无登录权限的专用用户 →
+把代码锁到 `/opt/blokus` → 装 systemd 服务并开机自启 → 等它就绪并自检 →
+放行防火墙 → 最后打印访问地址。
+
+装完就是一个常驻服务，`systemctl status blokus` 看状态、
+`journalctl -u blokus -f` 看日志，崩溃自动重启，跟你登不登录完全无关。
+
+想要域名 + HTTPS，再加一步（Caddy 比 Nginx 省事得多）：
+
+```bash
+sudo apt install -y caddy
+sudo caddy reverse-proxy --from blokus.example.com --to 127.0.0.1:3000
+```
+
+<details>
+<summary>一定要用 Nginx 的话（注意那两个头，漏了就连不上）</summary>
 
 ```nginx
 server {
@@ -112,15 +144,27 @@ server {
     }
 }
 ```
+</details>
 
-然后群里的链接就是 `https://blokus.example.com/?r=A7KQ`，谁都能点开。
+### 场景 D：Render 免费托管（不买服务器，推到 GitHub 点一下就行）
 
-> **强烈建议用 HTTPS。** 只有在 HTTPS 或 localhost 下，浏览器才允许
-> `navigator.share`（原生分享面板）和 `navigator.clipboard`（复制链接）。
-> 纯 HTTP 打开时程序会自动降级到「选中文本 + 复制」甚至弹窗让你手动复制，
-> 能用但不够顺手。
+项目里带了 `render.yaml` 蓝图：
 
-### 场景 C：没有公网 IP，用内网穿透（最快，几分钟就能开打）
+1. 把仓库推到 GitHub
+2. 打开 https://dashboard.render.com/blueprints → **New Blueprint Instance**
+3. 选这个仓库 → **Apply**
+
+Render 会读 `render.yaml`、用 `Dockerfile` 构建，给你一个
+`https://xxx.onrender.com` 地址。之后每次 push 自动重新部署。
+**你的电脑关机也照常运行。**
+
+> ⚠️ 免费版两个要注意的：
+> 1. **15 分钟没有流量会休眠**，下一个人打开要等约 30 秒冷启动。
+>    想让开局不卡，用 UptimeRobot 之类的免费监控每 5 分钟 ping 一次
+>    `/healthz`，正好卡在休眠阈值内。
+> 2. **休眠会丢掉内存里的房间**，正在进行的对局会没。约局中间别晾太久。
+
+### 场景 C：内网穿透（最快能开打，但依赖你的电脑）
 
 **推荐直接用项目自带的一键脚本**，它会自动下载 cloudflared、起服务器、开隧道、
 再把地址自检一遍：
@@ -351,8 +395,16 @@ Blokus/
 │  ├─ raster.js         零依赖的 Canvas 2D 光栅化器
 │  ├─ png.js / pngread.js  PNG 编解码（只用内置 zlib）
 ├─ art/              渲染预览产物（board.png / tray.png / board.svg）
+├─ deploy/
+│  ├─ vps-setup.sh      在一台新服务器上一键装成 systemd 常驻服务
+│  ├─ blokus.service    systemd 单元（含只读文件系统等安全加固）
+│  └─ Caddyfile         Caddy 反代配置（自动 HTTPS + 自动转发 WebSocket）
+├─ Dockerfile         生产镜像（零依赖，无 npm install 步骤）
+├─ docker-compose.yml 游戏 + Caddy 一条命令拉起
+├─ render.yaml        Render.com 一把梭蓝图
+├─ start-public.ps1   Windows 上开临时公网隧道（依赖本机，仅供快速开局）
 ├─ blokus.config.example.json   积分规则示例（复制成 blokus.config.json 即生效）
-└─ .gitignore
+└─ .gitignore / .gitattributes  后者负责锁死换行符，别删
 ```
 
 ### 为什么前端要直接引用 `/shared/`
