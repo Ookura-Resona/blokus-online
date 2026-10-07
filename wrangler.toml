@@ -34,7 +34,7 @@ new_sqlite_classes = ["RoomDurableObject"]
 
 [vars]
 AI_DELAY_MS = "650"
-OFFLINE_TAKEOVER_MS = "30000"
+TURN_LIMIT_MS = "20000"
 
 [observability]
 enabled = true

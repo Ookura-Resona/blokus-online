@@ -84,7 +84,7 @@ export class RoomDurableObject extends DurableObject {
         singleRoomCode: code,
         scoring: this.#scoring(),
         aiDelayMs: Number(this.env.AI_DELAY_MS ?? 650),
-        offlineTakeoverMs: Number(this.env.OFFLINE_TAKEOVER_MS ?? 30_000),
+        turnLimitMs: Number(this.env.TURN_LIMIT_MS ?? 20_000),
         onChange: (room) => this.#persist(room),
       });
       this.hub = new RoomHub(this.manager);

@@ -23,7 +23,7 @@ const config = loadConfig(ROOT);
 const app = createApp({
   scoring: config.scoring,
   aiDelayMs: config.aiDelayMs,
-  offlineTakeoverMs: config.offlineTakeoverMs,
+  turnLimitMs: config.turnLimitMs,
 });
 
 function localAddresses() {
@@ -51,7 +51,7 @@ app.server.listen(config.port, config.host, () => {
     `  积分规则：   ${config.configFile ? `来自 ${path.basename(config.configFile)}` : '使用内置默认值'}`,
   );
   console.log(
-    `  AI 每步停顿：${config.aiDelayMs}ms    离线托管：${config.offlineTakeoverMs / 1000}s`,
+    `  AI 每步停顿：${config.aiDelayMs}ms    思考时限：${config.turnLimitMs / 1000}s（超时自动托管）`,
   );
   console.log('  按 Ctrl+C 停止');
   console.log('');

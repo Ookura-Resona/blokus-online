@@ -40,12 +40,12 @@ function withEnv(pairs, fn) {
 
 test('没有配置文件时使用内置默认值', () => {
   const dir = tmpDirWith(null);
-  withEnv({ PORT: undefined, HOST: undefined, AI_DELAY_MS: undefined, OFFLINE_TAKEOVER_MS: undefined }, () => {
+  withEnv({ PORT: undefined, HOST: undefined, AI_DELAY_MS: undefined, TURN_LIMIT_MS: undefined }, () => {
     const cfg = loadConfig(dir);
     assert.equal(cfg.configFile, null);
     assert.deepEqual(cfg.scoring, DEFAULT_SCORING);
     assert.equal(cfg.aiDelayMs, 650);
-    assert.equal(cfg.offlineTakeoverMs, 30_000);
+    assert.equal(cfg.turnLimitMs, 20_000);
   });
 });
 
@@ -54,16 +54,16 @@ test('配置文件可以覆盖积分规则与运行参数', () => {
     port: 8123,
     host: '127.0.0.1',
     aiDelayMs: 0,
-    offlineTakeoverMs: 5000,
+    turnLimitMs: 5000,
     scoring: { ffaRankDelta: [5, 2, 0, -3], teamWinDelta: 4 },
   });
-  withEnv({ PORT: undefined, HOST: undefined, AI_DELAY_MS: undefined, OFFLINE_TAKEOVER_MS: undefined }, () => {
+  withEnv({ PORT: undefined, HOST: undefined, AI_DELAY_MS: undefined, TURN_LIMIT_MS: undefined }, () => {
     const cfg = loadConfig(dir);
     assert.ok(cfg.configFile.endsWith('blokus.config.json'));
     assert.equal(cfg.port, 8123);
     assert.equal(cfg.host, '127.0.0.1');
     assert.equal(cfg.aiDelayMs, 0);
-    assert.equal(cfg.offlineTakeoverMs, 5000);
+    assert.equal(cfg.turnLimitMs, 5000);
     assert.deepEqual(cfg.scoring.ffaRankDelta, [5, 2, 0, -3]);
     assert.equal(cfg.scoring.teamWinDelta, 4);
     // 没覆盖的字段保持默认
@@ -87,7 +87,7 @@ test('嵌套的 domination / fullClear 支持部分覆盖', () => {
 
 test('环境变量优先级高于配置文件', () => {
   const dir = tmpDirWith({ port: 8123, aiDelayMs: 111 });
-  withEnv({ PORT: '9999', AI_DELAY_MS: '7', HOST: undefined, OFFLINE_TAKEOVER_MS: undefined }, () => {
+  withEnv({ PORT: '9999', AI_DELAY_MS: '7', HOST: undefined, TURN_LIMIT_MS: undefined }, () => {
     const cfg = loadConfig(dir);
     assert.equal(cfg.port, 9999, 'PORT 环境变量应当覆盖配置文件');
     assert.equal(cfg.aiDelayMs, 7, 'AI_DELAY_MS 环境变量应当覆盖配置文件');

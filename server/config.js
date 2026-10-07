@@ -53,9 +53,7 @@ export function loadConfig(rootDir) {
     host: process.env.HOST ?? user.host ?? '0.0.0.0',
     /** AI 每步停顿（毫秒），让真人看得清 */
     aiDelayMs: Number(process.env.AI_DELAY_MS ?? user.aiDelayMs ?? 650),
-    /** 轮到离线玩家多久后自动托管 */
-    offlineTakeoverMs: Number(
-      process.env.OFFLINE_TAKEOVER_MS ?? user.offlineTakeoverMs ?? 30_000,
-    ),
+    /** 每位玩家的思考时间上限（毫秒），到点自动托管 */
+    turnLimitMs: Number(process.env.TURN_LIMIT_MS ?? user.turnLimitMs ?? 20_000),
   };
 }

@@ -780,6 +780,14 @@ input:focus {
   animation: pulse 1.1s ease-in-out infinite;
 }
 
+/* 思考时间只剩几秒：横幅转成警示色 */
+.turn-banner.is-urgent {
+  background: #2a2416;
+}
+.turn-banner.is-urgent .turn-text {
+  color: var(--warn);
+}
+
 .turn-text {
   overflow: hidden;
   text-overflow: ellipsis;

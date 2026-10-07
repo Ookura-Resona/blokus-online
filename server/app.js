@@ -74,13 +74,13 @@ export async function resolveStatic(urlPath) {
 
 /**
  * 创建一个应用实例（不自动 listen）。
- * @param {{scoring?:object, aiDelayMs?:number, offlineTakeoverMs?:number}} [options]
+ * @param {{scoring?:object, aiDelayMs?:number, turnLimitMs?:number}} [options]
  */
 export function createApp(options = {}) {
   const settings = {
     scoring: options.scoring ?? DEFAULT_SCORING,
     aiDelayMs: options.aiDelayMs ?? 650,
-    offlineTakeoverMs: options.offlineTakeoverMs ?? 30_000,
+    turnLimitMs: options.turnLimitMs ?? 20_000,
   };
 
   const manager = new RoomManager(settings);
@@ -120,7 +120,7 @@ export function createApp(options = {}) {
           teamOfSeat: TEAM_OF_SEAT,
           scoring: settings.scoring,
           aiDelayMs: settings.aiDelayMs,
-          offlineTakeoverMs: settings.offlineTakeoverMs,
+          turnLimitMs: settings.turnLimitMs,
         }),
       );
       return;

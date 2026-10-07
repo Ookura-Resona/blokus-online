@@ -7,7 +7,7 @@
  *      → 建房、走几手、把局面快照存到 persist-check.json
  *
  *   2) 停掉 wrangler dev（DO 实例随之销毁），再重新起一个
- *      npx wrangler dev --port 8787 --var AI_DELAY_MS:5 --var OFFLINE_TAKEOVER_MS:1000
+ *      npx wrangler dev --port 8787 --var AI_DELAY_MS:5 --var TURN_LIMIT_MS:1000
  *
  *   3) node tools/check-persistence.js after
  *      → 重连同一个房号，比对局面
@@ -75,7 +75,7 @@ if (phase === 'before') {
   // 让 0 号位走 4 手，让棋盘上有内容可验证
   const rng = mulberry32(4242);
   let acted = -1;
-  const deadline = Date.now() + 30_000;
+  const deadline = Date.now() + 20_000;
   while (Date.now() < deadline) {
     const raw = ws.latest(S2C.STATE)?.state;
     if (raw && !raw.over && raw.turn === 0 && acted !== raw.moveCount) {

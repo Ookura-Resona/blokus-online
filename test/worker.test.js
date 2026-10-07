@@ -3,7 +3,7 @@
  *
  * 需要先有一个跑着的 wrangler dev（或已部署的 Worker）：
  *
- *   npx wrangler dev --port 8787 --var AI_DELAY_MS:5 --var OFFLINE_TAKEOVER_MS:1000
+ *   npx wrangler dev --port 8787 --var AI_DELAY_MS:5 --var TURN_LIMIT_MS:1000
  *   BLOKUS_TARGET=http://127.0.0.1:8787 node --test test/worker.test.js
  *
  * 没有可用目标时会**跳过**（而不是失败），这样 `npm test` 在没起 Worker 时也能全绿。
@@ -175,7 +175,7 @@ test('Worker：断线重连能坐回原座位并恢复棋局（DO 状态持久�
   // 走 3 手，让局面有内容可恢复
   const rng = mulberry32(777);
   let acted = -1;
-  const deadline = Date.now() + 30_000;
+  const deadline = Date.now() + 20_000;
   while (Date.now() < deadline) {
     const raw = first.ws.latest(S2C.STATE)?.state;
     if (raw && !raw.over && raw.turn === 0 && acted !== raw.moveCount) {

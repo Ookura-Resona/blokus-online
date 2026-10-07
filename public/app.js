@@ -145,6 +145,9 @@ const app = {
   // 页面加载时可能只是先把连接**预热**好（用户还在输昵称），那时不该打招呼，
   // 否则会白白占住一个座位。点了「加入」才置为 true。
   pendingHello: false,
+  // 当前回合的思考时间截止时刻（本地时钟）。服务端给的是「还剩多少毫秒」，
+  // 在这里换算成本地时间，免得受两边时钟差影响。
+  turnEndsAt: null,
   reconnectDelay: 800,
   reconnectTimer: null,
   shuttingDown: false,
@@ -299,6 +302,8 @@ function leaveRoom() {
   app.lastState = null;
   app.result = null;
   app.seenLogLength = 0;
+  app.turnEndsAt = null;
+  stopTurnTicker();
   disconnect();
   app.shuttingDown = false; // 之后还要能再进别的房间
   closeResult();
@@ -373,6 +378,10 @@ function disconnect() {
   app.shuttingDown = true;
   clearTimeout(app.reconnectTimer);
   app.reconnectTimer = null;
+  // 倒计时定时器也要停：它是个 setInterval，不停掉会在页面切走后一直空转，
+  // 在 Node 里更会让进程永远退不出去（测试里踩过）。
+  stopTurnTicker();
+  app.turnEndsAt = null;
   try {
     app.ws?.close();
   } catch {
@@ -404,6 +413,8 @@ function handleMessage(msg) {
         app.room = null;
         app.lastState = null;
         app.result = null;
+        app.turnEndsAt = null;
+        stopTurnTicker();
         closeResult();
         showScreen('home');
         history.replaceState(null, '', location.pathname);
@@ -425,6 +436,9 @@ function handleMessage(msg) {
 
     case S2C.STATE:
       app.lastState = msg.state;
+      // 服务端给「还剩多少毫秒」，本地换算成截止时刻，避免两边时钟差
+      app.turnEndsAt =
+        typeof msg.turnMsLeft === 'number' ? Date.now() + msg.turnMsLeft : null;
       if (!el.screenGame.classList.contains('is-active')) showScreen('game');
       board.setMySeat(app.room?.yourSeat ?? null);
       board.setState(msg.state);
@@ -674,29 +688,84 @@ function squaresOfState(state) {
   return out;
 }
 
+/* ── 回合横幅与思考时间倒计时 ─────────────────────────────── */
+
+let turnTicker = null;
+
+function stopTurnTicker() {
+  if (turnTicker) {
+    clearInterval(turnTicker);
+    turnTicker = null;
+  }
+}
+
+function startTurnTicker() {
+  // 每 250ms 重画一次就够（显示到秒），不用更密
+  if (!turnTicker) turnTicker = setInterval(renderTurnBanner, 250);
+}
+
+/**
+ * 画回合横幅。开了 ticker 之后每 250ms 会被调一次，所以这里只管读状态算文字，
+ * 不要产生副作用。
+ *
+ * 倒计时只对**真人**显示 —— AI 是 0.65 秒一步，闪个倒计时没有意义。
+ */
+function renderTurnBanner() {
+  const state = app.lastState;
+  if (!state) return;
+
+  const mySeat = app.room?.yourSeat ?? null;
+  const isMine = mySeat !== null && state.turn === mySeat && !state.over;
+  const dot = el.turnBanner.querySelector('.turn-dot');
+  const text = el.turnBanner.querySelector('.turn-text');
+  el.turnBanner.classList.toggle('is-mine', isMine);
+
+  if (state.over) {
+    dot.style.background = 'var(--muted)';
+    text.textContent = '本局已结束';
+    el.turnBanner.classList.remove('is-urgent');
+    app.turnEndsAt = null;
+    stopTurnTicker();
+    return;
+  }
+
+  const turnSeat = app.room?.seats?.[state.turn];
+  let left = null;
+  if (turnSeat?.kind === 'human' && app.turnEndsAt) {
+    left = Math.max(0, app.turnEndsAt - Date.now());
+    startTurnTicker();
+  } else {
+    stopTurnTicker();
+  }
+
+  let suffix = '';
+  if (left !== null) {
+    // 到 0 了还没落子，说明服务端正在托管；下一帧状态就会变
+    suffix = left > 0 ? ` · ${Math.ceil(left / 1000)}s` : ' · 托管中…';
+    el.turnBanner.classList.toggle('is-urgent', left > 0 && left <= 5000);
+  } else {
+    el.turnBanner.classList.remove('is-urgent');
+  }
+
+  if (isMine) {
+    dot.style.background = SEAT_HEX[mySeat];
+    text.textContent = `轮到你落子${suffix}`;
+  } else {
+    dot.style.background = SEAT_HEX[state.turn];
+    const name = app.room?.seats?.[state.turn]?.name ?? SEAT_LABELS[state.turn];
+    text.textContent = `等待 ${name}（${SEAT_LABELS[state.turn]}）落子…${suffix}`;
+  }
+}
+
 function updateForState(state) {
   const mySeat = app.room?.yourSeat ?? null;
   const squares = squaresOfState(state);
-  const isMine = mySeat !== null && state.turn === mySeat && !state.over;
 
   // board.setState 可能因为棋子已落下而静默清空选择，这里同步回来
   app.selectedPiece = board.selection?.pieceId ?? null;
 
-  // 回合横幅
-  const dot = el.turnBanner.querySelector('.turn-dot');
-  const text = el.turnBanner.querySelector('.turn-text');
-  el.turnBanner.classList.toggle('is-mine', isMine);
-  if (state.over) {
-    dot.style.background = 'var(--muted)';
-    text.textContent = '本局已结束';
-  } else if (isMine) {
-    dot.style.background = SEAT_HEX[mySeat];
-    text.textContent = '轮到你落子';
-  } else {
-    dot.style.background = SEAT_HEX[state.turn];
-    const name = app.room?.seats?.[state.turn]?.name ?? SEAT_LABELS[state.turn];
-    text.textContent = `等待 ${name}（${SEAT_LABELS[state.turn]}）落子…`;
-  }
+  // 回合横幅（含思考时间倒计时）
+  renderTurnBanner();
 
   // 棋子栏
   renderTray(state, mySeat);

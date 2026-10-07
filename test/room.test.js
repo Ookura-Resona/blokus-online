@@ -16,7 +16,7 @@ import { MODE_FFA, MODE_TEAM, SEAT_COUNT } from '../shared/constants.js';
 
 /** 起服务器 + 两个已握手的客户端 */
 async function setup() {
-  const app = createApp({ aiDelayMs: 1, offlineTakeoverMs: 500 });
+  const app = createApp({ aiDelayMs: 1, turnLimitMs: 500 });
   await new Promise((r) => app.server.listen(0, '127.0.0.1', r));
   const port = app.server.address().port;
 
@@ -45,7 +45,7 @@ async function setup() {
  * 用 AI 代打所有真人座位，把一局推完。
  * 直接读各客户端消息日志里的最新状态，不需要后台协程，也就没有抢消息的竞态。
  */
-async function autoplay(clients, seats, timeoutMs = 30_000) {
+async function autoplay(clients, seats, timeoutMs = 20_000) {
   const rng = mulberry32(4242);
   const lastActedAt = new Map();
   const deadline = Date.now() + timeoutMs;
@@ -415,7 +415,7 @@ test('轮到离线的玩家时，超时后会自动托管继续对局', async ()
     await s.a.waitJson(S2C.ROOM);
     await s.a.waitJson(S2C.STATE);
 
-    // a 立刻断开；轮到他时应当在 offlineTakeoverMs(500ms) 后被托管
+    // a 立刻断开；轮到他时应当在 turnLimitMs(500ms) 后被托管
     s.a.close();
 
     const room = [...s.app.manager.rooms.values()][0];
@@ -427,6 +427,55 @@ test('轮到离线的玩家时，超时后会自动托管继续对局', async ()
     assert.ok(room.state.moveCount >= 2, `离线托管没有生效，moveCount=${room.state?.moveCount}`);
   } finally {
     await s.cleanup();
+  }
+});
+
+test('思考时间用完就自动托管，哪怕人还连着', async () => {
+  // 这是「每人 20 秒」的核心行为：一个人发呆不该把整桌人卡住。
+  // 用很短的 turnLimitMs 来测，不然要等 20 秒。
+  const app = createApp({ aiDelayMs: 1, turnLimitMs: 400 });
+  await new Promise((r) => app.server.listen(0, '127.0.0.1', r));
+  const port = app.server.address().port;
+  const a = await connectWs(port);
+  try {
+    a.sendJSON({ t: C2S.HELLO, playerId: 'idle-a', name: '发呆的人' });
+    await a.waitJson(S2C.WELCOME);
+    a.sendJSON({ t: C2S.CREATE_ROOM });
+    await a.waitJson(S2C.ROOM);
+    for (const seat of [1, 2, 3]) {
+      a.sendJSON({ t: C2S.SET_SEAT, seat, kind: 'ai' });
+      await a.waitJson(S2C.ROOM);
+    }
+    a.sendJSON({ t: C2S.START });
+    await a.waitJson(S2C.ROOM);
+    const first = await a.waitJson(S2C.STATE);
+
+    // 关键：a **一直连着**，但一手都不下
+    assert.equal(first.state.turn, 0, '开局应当轮到 0 号位');
+    assert.ok(
+      typeof first.turnMsLeft === 'number' && first.turnMsLeft > 0,
+      `STATE 里应当带上剩余思考时间，实际是 ${first.turnMsLeft}`,
+    );
+    assert.ok(first.turnMsLeft <= 400, `剩余时间不该超过时限，实际 ${first.turnMsLeft}`);
+
+    const room = [...app.manager.rooms.values()][0];
+    const deadline = Date.now() + 8000;
+    while (Date.now() < deadline) {
+      if (room.state && room.state.moveCount >= 1) break;
+      await new Promise((r) => setTimeout(r, 30));
+    }
+
+    assert.ok(
+      room.state.moveCount >= 1,
+      `连着不下棋也应当被托管，实际 moveCount=${room.state?.moveCount}`,
+    );
+    // 托管落的那一手要打上标记，界面上会显示成「托管」
+    const auto = room.state.log.find((m) => m.auto);
+    assert.ok(auto, '托管落子应当被标记 auto');
+    assert.equal(auto.seat, 0, '应当是 0 号位被托管');
+  } finally {
+    a.destroy();
+    await app.close();
   }
 });
 

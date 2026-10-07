@@ -49,8 +49,11 @@ const CODE_LENGTH = 4;
 
 /** AI 每步之间的停顿，让真人看得清 */
 const AI_DELAY_MS = 650;
-/** 轮到离线玩家多久之后自动托管 */
-const OFFLINE_TAKEOVER_MS = 30_000;
+/**
+ * 每位玩家的思考时间上限。到点还没落子就自动托管（AI 替他走一手），
+ * 免得一个人卡住整桌人。掉线的玩家走同一条路 —— 反正他不在。
+ */
+const TURN_LIMIT_MS = 20_000;
 /** 空房间保留时长 */
 const ROOM_TTL_MS = 20 * 60 * 1000;
 const MAX_CHAT = 60;
@@ -76,7 +79,7 @@ export class RoomManager {
     this.rooms = new Map();
     this.scoring = options.scoring ?? DEFAULT_SCORING;
     this.aiDelayMs = options.aiDelayMs ?? AI_DELAY_MS;
-    this.offlineTakeoverMs = options.offlineTakeoverMs ?? OFFLINE_TAKEOVER_MS;
+    this.turnLimitMs = options.turnLimitMs ?? TURN_LIMIT_MS;
 
     /**
      * 单房间模式（Durable Object 用）：固定房号，get() 永远返回这一个房间。
@@ -216,8 +219,7 @@ export class RoomHub {
 
   broadcastState(room) {
     if (!room.state) return;
-    const payload = { t: S2C.STATE, state: serializeState(room.state) };
-    this.broadcast(room, payload);
+    this.broadcast(room, this.statePayload(room));
   }
 
   error(conn, message) {
@@ -325,7 +327,7 @@ export class RoomHub {
 
     this.touch(room);
     this.broadcastRoom(room);
-    if (room.state) this.send(conn, { t: S2C.STATE, state: serializeState(room.state) });
+    if (room.state) this.send(conn, this.statePayload(room));
     if (room.result) this.send(conn, { t: S2C.RESULT, result: this.publicResult(room) });
     this.tick(room);
   }
@@ -514,12 +516,8 @@ export class RoomHub {
     this.touch(room);
 
     this.broadcastRoom(room);
-    this.broadcast(room, {
-      t: S2C.STATE,
-      state: serializeState(room.state),
-      gameNo: room.gameNo,
-    });
     this.tick(room);
+    this.broadcast(room, { ...this.statePayload(room), gameNo: room.gameNo });
   }
 
   rematch(conn) {
@@ -549,6 +547,7 @@ export class RoomHub {
   tick(room) {
     clearTimeout(room.aiTimer);
     room.aiTimer = null;
+    room.turnDeadline = null; // 每一手重新计时
     if (!room.state) return;
 
     if (room.state.over) {
@@ -564,16 +563,28 @@ export class RoomHub {
     if (s.kind === 'ai') {
       room.aiTimer = setTimeout(() => this.aiMove(room, seat, {}), this.manager.aiDelayMs);
       room.aiTimer.unref?.();
+      room.turnDeadline = Date.now() + this.manager.aiDelayMs;
       return;
     }
-    if (!this.isSeatConnected(room, seat)) {
-      // 轮到他但人不在 —— 等一会儿自动托管，避免整局卡死
-      room.aiTimer = setTimeout(
-        () => this.aiMove(room, seat, { substitute: true }),
-        this.manager.offlineTakeoverMs,
-      );
-      room.aiTimer.unref?.();
-    }
+
+    // 真人：不管连没连着，都只给这么多思考时间，到点自动托管（AI 替他走一手）。
+    // 掉线的人当然不会思考，这段时间其实是留给他重连的机会。
+    const limit = this.manager.turnLimitMs;
+    room.turnDeadline = Date.now() + limit;
+    room.aiTimer = setTimeout(() => this.aiMove(room, seat, { substitute: true }), limit);
+    room.aiTimer.unref?.();
+  }
+
+  /**
+   * 组装 STATE 广播的载荷，附上当前回合还剩多少思考时间。
+   * 传「剩余毫秒」而不是绝对时间戳，这样前端不用关心自己和服务器之间的时钟差。
+   */
+  statePayload(room) {
+    return {
+      t: S2C.STATE,
+      state: serializeState(room.state),
+      turnMsLeft: room.turnDeadline ? Math.max(0, room.turnDeadline - Date.now()) : null,
+    };
   }
 
   aiMove(room, seat, opts) {
@@ -613,8 +624,9 @@ export class RoomHub {
       pieceId: move?.pieceId ?? null,
       auto: !!opts.substitute || room.seats[seat]?.kind === 'ai',
     });
-    this.broadcastState(room);
+    // 先 tick 把下一手的思考时限定下来，再广播 —— 否则 turnMsLeft 是上一手的
     this.tick(room);
+    this.broadcastState(room);
   }
 
   /** 真人落子 */
@@ -640,8 +652,9 @@ export class RoomHub {
 
     this.touch(room);
     this.broadcast(room, { t: S2C.MOVE_MADE, seat, pieceId, auto: false });
-    this.broadcastState(room);
+    // 先 tick 把下一手的思考时限定下来，再广播 —— 否则 turnMsLeft 是上一手的
     this.tick(room);
+    this.broadcastState(room);
   }
 
   /** 真人主动弃权（只有确实无子可下时才允许） */
@@ -659,8 +672,9 @@ export class RoomHub {
     passSeat(room.state, seat);
     settle(room.state);
     this.touch(room);
-    this.broadcastState(room);
+    // 先 tick 把下一手的思考时限定下来，再广播 —— 否则 turnMsLeft 是上一手的
     this.tick(room);
+    this.broadcastState(room);
   }
 
   finish(room) {

@@ -49,7 +49,8 @@ function readChips(el) {
 }
 
 test('对局中显示玩家状态：在线 / 离线 / 重连中', async () => {
-  const serverApp = createApp({ aiDelayMs: 5 });
+  // turnLimitMs 给大一点：这条测的是状态显示，不想让「超时托管」来搅局
+  const serverApp = createApp({ aiDelayMs: 5, turnLimitMs: 30_000 });
   await new Promise((r) => serverApp.server.listen(0, '127.0.0.1', r));
   const port = serverApp.server.address().port;
   const host = `127.0.0.1:${port}`;
@@ -89,6 +90,15 @@ test('对局中显示玩家状态：在线 / 离线 / 重连中', async () => {
 
     /* ---------- 4. 四个人都该显示出来，状态正确 ---------- */
     await until(() => el.playersBar.hidden === false, 5000, '玩家条出现');
+
+    // 回合横幅上要显示思考时间倒计时（轮到真人时才有）
+    const bannerText = el.turnBanner.querySelector('.turn-text').textContent;
+    assert.match(
+      bannerText,
+      /\d+s/,
+      `轮到真人时回合横幅应当显示倒计时，实际是「${bannerText}」`,
+    );
+
     let chips = readChips(el);
     assert.equal(chips.length, 4, '应当有 4 个玩家');
     assert.deepEqual(
