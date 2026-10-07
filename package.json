@@ -16,7 +16,7 @@
     "assets": "node tools/build-assets.js",
     "test": "node --test test/pieces.test.js test/rules.test.js test/scoring.test.js test/config.test.js test/ui.test.js test/ws.test.js test/room.test.js test/web.test.js test/worker.test.js",
     "test:inproc": "node --experimental-test-isolation=none --test test/pieces.test.js test/rules.test.js test/scoring.test.js test/config.test.js test/ui.test.js test/ws.test.js test/room.test.js test/web.test.js test/worker.test.js",
-    "check": "node tools/check-encoding.js && node tools/check-case.js && node tools/smoke.js",
+    "check": "node tools/check-syntax.js && node tools/check-encoding.js && node tools/check-case.js && node tools/smoke.js",
     "check:deploy": "node tools/check-deploy.js",
     "render": "node tools/render-preview.js && node tools/verify-render.js",
     "sim": "node tools/sim.js 40 normal ffa"

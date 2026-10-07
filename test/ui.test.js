@@ -169,3 +169,12 @@ test('站内路径的大小写与磁盘完全一致（Windows 不区分大小写
     [],
   );
 });
+
+test('所有 JS 文件语法正确（防止改坏某个文件却没被任何测试覆盖到）', async () => {
+  // 真踩过：用文本替换工具改文件时丢了一个模板字符串的反引号，
+  // 把 tools/check-persistence.js 整个弄成解析失败，而且一路提交了上去 ——
+  // 因为那个工具只在手动流程里用，普通测试根本碰不到它。
+  const { findSyntaxErrors } = await import('../tools/check-syntax.js');
+  const bad = findSyntaxErrors();
+  assert.deepEqual(bad, [], `这些文件语法有问题：${bad.join(', ')}`);
+});
