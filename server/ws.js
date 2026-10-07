@@ -51,6 +51,11 @@ export class WsConnection extends EventEmitter {
     socket.on('data', (chunk) => this.feed(chunk));
     socket.on('close', () => this.#finalize());
     socket.on('error', () => this.#finalize());
+    // 对端发了 FIN（手机断网、强关页面、进程被杀）。
+    // 关键：Node 收到 FIN 只触发 'end'，**不会**自动关掉我们这一侧，
+    // 所以 'close' 永远不来 —— 连接一直半开着，玩家在服务端眼里永远在线，
+    // 掉线托管也不会触发。必须在这里主动收尾。
+    socket.on('end', () => this.#finalize());
     if (typeof socket.setNoDelay === 'function') socket.setNoDelay(true);
   }
 
@@ -298,6 +303,13 @@ export class WsConnection extends EventEmitter {
   }
 
   #finalize() {
+    // 不管从哪条路径进来（TCP 断开 / 半开 / 写失败），都要把底层 socket 收掉，
+    // 否则半开连接会一直占着句柄。
+    try {
+      this.#socket.destroy();
+    } catch {
+      /* 忽略 */
+    }
     if (this.closed) {
       this.emit('_closed');
       return;

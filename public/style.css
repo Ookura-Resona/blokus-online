@@ -659,6 +659,97 @@ input:focus {
   margin-bottom: 6px;
 }
 
+/* ── 对局中的玩家状态条 ──────────────────────────────────────
+   四个人各自在线/离线一眼可见。窄屏放不下时横向滚动，不换行挤压棋盘。 */
+.players-bar {
+  display: flex;
+  gap: 6px;
+  padding: 0 10px 8px;
+  overflow-x: auto;
+  scrollbar-width: none;
+  -webkit-overflow-scrolling: touch;
+}
+.players-bar::-webkit-scrollbar {
+  display: none;
+}
+
+.player-chip {
+  --c: var(--muted);
+  flex: 1 1 0;
+  min-width: 78px;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 5px 7px;
+  border-radius: var(--r-sm);
+  background: var(--card);
+  border: 1px solid var(--line-soft);
+  font-size: 11px;
+  line-height: 1.2;
+  transition: border-color 0.15s, background 0.15s;
+}
+.player-chip.is-turn {
+  border-color: var(--c);
+  background: var(--card-2);
+}
+.player-chip.is-me .pc-name {
+  font-weight: 700;
+}
+
+.pc-dot {
+  flex: none;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--c);
+}
+
+.pc-name {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text);
+}
+
+.pc-state {
+  flex: none;
+  font-size: 10px;
+  color: var(--ok);
+}
+
+/* 离线：整条压暗，状态文字用警示色 */
+.player-chip.is-offline .pc-name {
+  opacity: 0.5;
+}
+.player-chip.is-offline .pc-dot {
+  opacity: 0.3;
+}
+.player-chip.is-offline .pc-state {
+  color: var(--warn);
+}
+
+/* 重连中：自己掉线了，服务端此刻也联系不上我，所以这个状态只有前端知道 */
+.player-chip.is-reconnecting {
+  animation: pc-pulse 1.2s ease-in-out infinite;
+}
+.player-chip.is-reconnecting .pc-state {
+  color: var(--warn);
+}
+
+@keyframes pc-pulse {
+  50% {
+    opacity: 0.45;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .player-chip.is-reconnecting {
+    animation: none;
+  }
+}
+
 .turn-banner {
   flex: 1;
   display: flex;

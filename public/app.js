@@ -38,6 +38,7 @@ const el = {
   btnShare: $('btn-share'),
   btnCopy: $('btn-copy'),
   seatList: $('seat-list'),
+  playersBar: $('players-bar'),
   seatHint: $('seat-hint'),
   roomModeLabel: $('room-mode-label'),
   segMode: $('seg-mode'),
@@ -191,6 +192,74 @@ function setConn(state, text) {
   el.connBar.hidden = state === 'ok';
   el.connBar.classList.toggle('is-ok', state === 'ok');
   el.connText.textContent = text;
+  // 自己的连接状态变了，玩家条上「重连中」要立刻反映出来
+  renderPlayers();
+}
+
+/**
+ * 对局中的玩家状态条。
+ *
+ * 状态有两个来源：
+ *   · 别人的 —— 服务端在 ROOM 广播里给的 `connected`。玩家掉线时服务端会重新
+ *     广播一次，所以这边能收到。
+ *   · 我自己的 —— 只能前端自己判断。我掉线的时候服务端就算把我标成离线，
+ *     那条广播我也收不到，所以「重连中」必须由本地状态推导。
+ */
+function renderPlayers() {
+  const room = app.room;
+  // 大厅里有完整的座位卡片，这条只在开局后显示
+  if (!room || room.phase === 'lobby') {
+    el.playersBar.hidden = true;
+    el.playersBar.innerHTML = '';
+    return;
+  }
+
+  el.playersBar.hidden = false;
+  el.playersBar.innerHTML = '';
+  const turn = app.lastState && !app.lastState.over ? app.lastState.turn : null;
+
+  for (const s of room.seats) {
+    const node = document.createElement('div');
+    node.className = 'player-chip';
+    node.style.setProperty('--c', SEAT_HEX[s.seat]);
+    if (s.isYou) node.classList.add('is-me');
+    if (turn === s.seat) node.classList.add('is-turn');
+
+    let state;
+    let cls;
+    if (s.kind === 'ai') {
+      state = 'AI';
+      cls = 'is-online';
+    } else if (s.kind === 'open') {
+      state = '空位';
+      cls = 'is-offline';
+    } else if (s.isYou && !app.connected) {
+      // 我自己的座位：连接断了就是在重连，而不是「离线」
+      state = '重连中';
+      cls = 'is-reconnecting';
+    } else if (!s.connected) {
+      state = '离线';
+      cls = 'is-offline';
+    } else {
+      state = '在线';
+      cls = 'is-online';
+    }
+    node.classList.add(cls);
+
+    const dot = document.createElement('i');
+    dot.className = 'pc-dot';
+
+    const name = document.createElement('span');
+    name.className = 'pc-name';
+    name.textContent = s.name ?? `座位 ${s.seat + 1}`;
+
+    const st = document.createElement('span');
+    st.className = 'pc-state';
+    st.textContent = state;
+
+    node.append(dot, name, st);
+    el.playersBar.append(node);
+  }
 }
 
 /** 进入房间：先定下房号，再按房号连到对应的房间实例 */
@@ -361,6 +430,7 @@ function handleMessage(msg) {
       board.setState(msg.state);
       updateForState(msg.state);
       noteNewLogs(msg.state);
+      renderPlayers(); // 轮次变了，玩家条上的高亮跟着走
       if (msg.state.over && app.result) showResult(app.result);
       break;
 
@@ -405,6 +475,7 @@ function handleMessage(msg) {
 function renderRoom(room) {
   el.roomCode.textContent = room.code;
   el.roomModeLabel.textContent = room.mode === MODE_TEAM ? '二对二' : '四人混战';
+  renderPlayers();
 
   // 座位
   el.seatList.innerHTML = '';
