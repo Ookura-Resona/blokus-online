@@ -83,17 +83,26 @@ for (const ext of ['.html', '.js', '.css']) {
 }
 
 // 抽查几个关键中文字符串，确认没有变成乱码
+// 抽查几个关键中文字符串，确认没有变成乱码。
+// 注意：这里列的文件一旦被移动/改名，就会直接 ENOENT 崩掉 —— 所以下面
+// 对「文件不存在」单独给了明确报错，而不是让它抛一个看不懂的堆栈。
 const checks = [
   ['public/index.html', '角斗士棋'],
   ['public/app.js', '还没轮到你'],
   ['shared/constants.js', '蓝方'],
   ['shared/rules.js', '第一枚棋子必须盖住你的起始角'],
   ['shared/scoring.js', '统治力奖励'],
-  ['server/rooms.js', '只有房主能开始游戏'],
+  ['shared/rooms.js', '只有房主能开始游戏'],
+  ['worker/room.js', '房间 Durable Object'],
 ];
 console.log('');
 for (const [file, needle] of checks) {
-  const text = fs.readFileSync(path.join(ROOT, file), 'utf8');
+  const full = path.join(ROOT, file);
+  if (!fs.existsSync(full)) {
+    bad(`${file} 不存在 —— 它可能被移动或改名了，请同步更新 tools/check-encoding.js 里的清单`);
+    continue;
+  }
+  const text = fs.readFileSync(full, 'utf8');
   if (text.includes(needle)) console.log(`  ✓ ${file} 包含「${needle}」`);
   else bad(`${file} 里找不到「${needle}」（可能编码坏了）`);
 }
