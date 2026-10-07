@@ -1,0 +1,38 @@
+# 换行符统一策略
+#
+# 为什么必须有这个文件：Windows 上 Git 默认会把文本文件转成 CRLF，
+# 而下面这些文件一旦带上 \r 就会在 Linux 上直接坏掉：
+#   · *.sh        → bash 报 "$'\r': command not found"
+#   · Dockerfile  → 行继续符和 RUN 会解析错误
+#   · *.service   → systemd 解析失败
+#   · Caddyfile / *.yml → 解析器可能拒绝
+# 所以这里显式把仓库内容固定成 LF，跟平台无关。
+
+# 默认：仓库里一律存 LF
+* text=auto eol=lf
+
+# 图片等二进制文件不要做任何转换
+*.png binary
+*.jpg binary
+*.ico binary
+*.woff2 binary
+
+# Windows 原生脚本用 CRLF（方便用记事本/VS Code 编辑）
+*.ps1 text eol=crlf
+*.cmd text eol=crlf
+*.bat text eol=crlf
+
+# 下面这些必须是 LF —— 显式再声明一次，防止以后有人改上面的默认值
+*.sh       text eol=lf
+*.js       text eol=lf
+*.css      text eol=lf
+*.html     text eol=lf
+*.json     text eol=lf
+*.yml      text eol=lf
+*.yaml     text eol=lf
+*.md       text eol=lf
+*.service  text eol=lf
+Dockerfile text eol=lf
+Caddyfile  text eol=lf
+.dockerignore text eol=lf
+.gitignore    text eol=lf

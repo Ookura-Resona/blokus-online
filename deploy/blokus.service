@@ -1,0 +1,44 @@
+[Unit]
+Description=角斗士棋 Blokus Online
+Documentation=https://github.com/
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/blokus
+ExecStart=/usr/bin/node server/index.js
+
+Environment=NODE_ENV=production
+Environment=PORT=3000
+Environment=HOST=0.0.0.0
+
+Restart=always
+RestartSec=3
+
+User=blokus
+Group=blokus
+
+# ── 安全加固 ────────────────────────────────────────────────
+# 应用运行期不写任何文件（房间状态都在内存里），
+# 所以可以把文件系统锁成只读，被攻破也改不了东西。
+NoNewPrivileges=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+RestrictRealtime=true
+LockPersonality=true
+MemoryDenyWriteExecute=true
+
+# 日志走 journald
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=blokus
+
+[Install]
+WantedBy=multi-user.target

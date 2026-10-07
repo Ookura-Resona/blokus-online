@@ -1,0 +1,39 @@
+{
+  "_说明": "把这个文件复制成 blokus.config.json 就会被服务器自动读取。所有字段都可以省略，省略就用内置默认值。",
+
+  "port": 3000,
+  "host": "0.0.0.0",
+
+  "_aiDelayMs": "AI 每落一手之间的停顿（毫秒），让真人看得清。设为 0 可以瞬间走完。",
+  "aiDelayMs": 650,
+
+  "_offlineTakeoverMs": "轮到掉线的玩家多久之后由系统托管替他落子（毫秒），避免整局卡死。",
+  "offlineTakeoverMs": 30000,
+
+  "scoring": {
+    "_base": "基础分，仅用于展示（题目里「基础分为 1 时」的那个 1）。",
+    "base": 1,
+
+    "_ffaRankDelta": "四人混战第 1/2/3/4 名的增减分。",
+    "ffaRankDelta": [3, 1, 0, -2],
+
+    "_teamDelta": "二对二胜方每人 / 败方每人的增减分。",
+    "teamWinDelta": 2,
+    "teamLoseDelta": -1,
+
+    "_domination": "统治力奖励：头名（或胜方）领先达到阈值时额外加分。",
+    "_dominationNote": "ffffaGap 默认 10 而不是 20：实测四人混战头名领先第二名 p90 只有 9 格、最大 12 格，20 格阈值 100 局触发 0 次。二对二实测 p90 = 20，所以用 20。用 `node tools/sim.js` 可以自己复核。",
+    "domination": {
+      "enabled": true,
+      "ffaGap": 10,
+      "teamGap": 20,
+      "points": 1
+    },
+
+    "_fullClear": "全清奖励：把 21 块全部下完时额外加分。",
+    "fullClear": {
+      "enabled": true,
+      "points": 1
+    }
+  }
+}

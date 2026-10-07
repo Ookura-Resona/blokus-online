@@ -1,0 +1,215 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover"
+    />
+    <meta name="theme-color" content="#0b1220" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="description" content="角斗士棋（Blokus）多人在线对战：四人混战 / 二对二，手机点开链接即可加入房间。" />
+    <title>角斗士棋 · 多人在线</title>
+    <link rel="stylesheet" href="/style.css" />
+  </head>
+  <body>
+    <!-- 连接状态条（断线时出现） -->
+    <div id="conn-bar" class="conn-bar" hidden>
+      <span class="conn-dot"></span><span id="conn-text">正在连接服务器…</span>
+    </div>
+
+    <!-- ══════════════════ 首页 ══════════════════ -->
+    <section id="screen-home" class="screen is-active">
+      <header class="brand">
+        <div class="brand-mark" aria-hidden="true">
+          <span style="--c: #3b82f6"></span><span style="--c: #eab308"></span>
+          <span style="--c: #ef4444"></span><span style="--c: #22c55e"></span>
+        </div>
+        <h1>角斗士棋</h1>
+        <p class="brand-sub">Blokus · 四人混战 / 二对二 · 手机直接开打</p>
+      </header>
+
+      <div class="card">
+        <label class="field">
+          <span>你的昵称</span>
+          <input id="input-name" maxlength="16" placeholder="给自己起个名字" autocomplete="nickname" />
+        </label>
+
+        <button id="btn-create" class="btn btn-primary btn-lg btn-block">创建房间</button>
+
+        <div class="divider"><span>或者用房号加入</span></div>
+
+        <div class="join-row">
+          <input
+            id="input-code"
+            class="code-input"
+            maxlength="4"
+            placeholder="房号"
+            autocapitalize="characters"
+            autocomplete="off"
+            spellcheck="false"
+          />
+          <button id="btn-join" class="btn btn-lg">加入</button>
+        </div>
+        <p id="home-hint" class="hint"></p>
+      </div>
+
+      <details class="card rules-card">
+        <summary>游戏规则与积分</summary>
+        <div class="rules-body">
+          <h4>怎么下</h4>
+          <ol>
+            <li>四位玩家各执一色，按<b>逆时针</b>顺序轮流下棋。</li>
+            <li>每人<b>第一枚</b>棋子必须盖住自己那一角的起始点。</li>
+            <li>
+              之后每一枚新棋子，至少要有一个<b>角</b>与自己的棋子<b>角对角</b>相接；
+              同一颜色的棋子之间<b>不能边边相邻</b>。与其他颜色没有任何接触限制。
+            </li>
+            <li>轮到你却无处可下时自动弃权；所有人都下不动时本局结束。</li>
+          </ol>
+
+          <h4>四人混战计分</h4>
+          <ul>
+            <li>按占格数排名，最多者胜；<b>格数相同时后手排名更高</b>。</li>
+            <li>名次增减分：第一名 <b>+3</b>、第二名 <b>+1</b>、第三名 <b>0</b>、最后一名 <b>−2</b>。</li>
+            <li>统治力奖励：头名领先第二名达到阈值 <b>+1</b>。</li>
+            <li>全清奖励：头名把 21 块全部下完 <b>+1</b>。</li>
+          </ul>
+
+          <h4>二对二计分</h4>
+          <ul>
+            <li>对角的两人为一队，占格总数多的一队获胜；<b>总数相同时后手一队获胜</b>。</li>
+            <li>胜方每人 <b>+2</b>，败方每人 <b>−1</b>。</li>
+            <li>表现特别强的胜方玩家（领先达标 / 全清）额外加分。</li>
+          </ul>
+        </div>
+      </details>
+    </section>
+
+    <!-- ══════════════════ 房间大厅 ══════════════════ -->
+    <section id="screen-room" class="screen">
+      <div class="card share-card">
+        <div class="share-code">
+          <span class="share-label">房号</span>
+          <strong id="room-code">····</strong>
+        </div>
+        <div class="share-actions">
+          <button id="btn-share" class="btn btn-primary">分享邀请链接</button>
+          <button id="btn-copy" class="btn">复制</button>
+        </div>
+        <p class="hint">把链接发到群里，大家点开就能进来。</p>
+      </div>
+
+      <div class="card">
+        <div class="card-title">座位 <span class="sub" id="room-mode-label"></span></div>
+        <div id="seat-list" class="seat-list"></div>
+        <p class="hint" id="seat-hint">
+          点空位坐下；房主可以把空位设成 AI。人数不足时开局会自动补 AI。
+        </p>
+      </div>
+
+      <div class="card">
+        <div class="card-title">对局设置 <span class="sub">只有房主能改</span></div>
+
+        <div class="seg-label">模式</div>
+        <div class="seg" id="seg-mode">
+          <button type="button" data-mode="ffa" class="seg-btn">四人混战</button>
+          <button type="button" data-mode="team" class="seg-btn">二对二</button>
+        </div>
+
+        <div class="seg-label">AI 难度</div>
+        <div class="seg" id="seg-difficulty">
+          <button type="button" data-difficulty="easy" class="seg-btn">简单</button>
+          <button type="button" data-difficulty="normal" class="seg-btn">普通</button>
+          <button type="button" data-difficulty="hard" class="seg-btn">困难</button>
+        </div>
+
+        <button id="btn-start" class="btn btn-primary btn-lg btn-block">开始游戏</button>
+        <p class="hint" id="room-hint"></p>
+      </div>
+
+      <div class="card">
+        <div class="card-title">累计积分 <span class="sub">跨局累加</span></div>
+        <ol id="leaderboard" class="leaderboard"><li class="empty">还没有人对局过</li></ol>
+      </div>
+
+      <div class="card">
+        <div class="card-title">聊天</div>
+        <div id="chat-log" class="chat-log"></div>
+        <form id="chat-form" class="chat-form">
+          <input id="chat-input" maxlength="200" placeholder="说点什么…" autocomplete="off" />
+          <button class="btn" type="submit">发送</button>
+        </form>
+      </div>
+
+      <button id="btn-leave" class="btn btn-ghost btn-block">离开房间</button>
+    </section>
+
+    <!-- ══════════════════ 对局 ══════════════════ -->
+    <section id="screen-game" class="screen screen-game">
+      <div class="game-top">
+        <div id="turn-banner" class="turn-banner">
+          <span class="turn-dot"></span>
+          <span class="turn-text">等待开始…</span>
+        </div>
+        <div class="top-actions">
+          <button id="btn-result" class="icon-btn" title="查看结算" hidden>结</button>
+          <button id="btn-rules" class="icon-btn" title="规则">?</button>
+          <button id="btn-scoreboard" class="icon-btn" title="计分板">☰</button>
+        </div>
+      </div>
+
+      <div class="board-wrap" id="board-wrap">
+        <canvas id="board"></canvas>
+        <div id="board-tip" class="board-tip"></div>
+      </div>
+
+      <div class="game-actions">
+        <button id="btn-rotate" class="action-btn"><b>↻</b><span>旋转</span></button>
+        <button id="btn-flip" class="action-btn"><b>⇋</b><span>翻转</span></button>
+        <button id="btn-confirm" class="action-btn is-primary"><b>✓</b><span>落子</span></button>
+        <button id="btn-cancel" class="action-btn"><b>✕</b><span>取消</span></button>
+      </div>
+
+      <div class="tray-head">
+        <span id="tray-info" class="tray-info">我的棋子</span>
+        <label class="snap-toggle">
+          <input id="chk-snap" type="checkbox" checked />
+          <span>自动吸附</span>
+        </label>
+      </div>
+      <div id="tray" class="tray"></div>
+    </section>
+
+    <!-- ══════════════════ 计分板抽屉 ══════════════════ -->
+    <div id="sheet-backdrop" class="sheet-backdrop" hidden></div>
+    <aside id="sheet" class="sheet" hidden>
+      <div class="sheet-head">
+        <strong id="sheet-title">计分板</strong>
+        <button id="btn-sheet-close" class="icon-btn">✕</button>
+      </div>
+      <div id="sheet-body" class="sheet-body"></div>
+    </aside>
+
+    <!-- ══════════════════ 结算浮层 ══════════════════ -->
+    <div id="result-modal" class="modal" hidden>
+      <div class="modal-card">
+        <h2 id="result-title">本局结束</h2>
+        <p id="result-sub" class="hint"></p>
+        <div id="result-rows" class="result-rows"></div>
+        <pre id="result-summary" class="summary"></pre>
+        <div id="result-bonus" class="result-bonus"></div>
+        <button id="btn-again" class="btn btn-primary btn-lg btn-block">再来一局</button>
+        <div class="modal-row">
+          <button id="btn-view-board" class="btn">查看棋盘</button>
+          <button id="btn-back-room" class="btn">回到房间</button>
+        </div>
+      </div>
+    </div>
+
+    <div id="toast-wrap" class="toast-wrap"></div>
+
+    <script type="module" src="/app.js"></script>
+  </body>
+</html>

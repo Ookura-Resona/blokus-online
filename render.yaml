@@ -1,0 +1,36 @@
+# Render.com 一键部署蓝图（免费版就够）
+#
+# 用法：
+#   1. 把这个项目推到你的 GitHub 仓库
+#   2. 打开 https://dashboard.render.com/blueprints
+#   3. New Blueprint Instance → 选这个仓库 → Apply
+#
+# Render 会自动读这个文件、用 Dockerfile 构建、给你一个
+# https://xxx.onrender.com 的地址。之后每次 push 都会自动重新部署。
+#
+# ⚠️ 免费版的两个注意事项：
+#   1. 15 分钟没有任何入站流量就会休眠，下一个人打开要等约 30 秒冷启动。
+#      想让开局不卡，可以用 UptimeRobot 之类的免费监控每 5 分钟 ping 一次
+#      /healthz —— 正好卡在休眠阈值内。
+#   2. 休眠会丢掉内存里的房间（正在进行的对局会没）。约局中间别晾太久。
+
+services:
+  - type: web
+    name: blokus-online
+    runtime: docker
+    dockerfilePath: ./Dockerfile
+    plan: free
+    # 离国内最近的节点。可选：oregon / ohio / virginia / frankfurt / singapore
+    region: singapore
+    healthCheckPath: /healthz
+    autoDeploy: true
+    envVars:
+      - key: NODE_ENV
+        value: production
+      # PORT 由 Render 自动注入，不要在这里覆盖
+      # AI 每步停顿（毫秒），想让 AI 出招快点就调小
+      - key: AI_DELAY_MS
+        value: 650
+      # 轮到掉线玩家多久后自动托管（毫秒）
+      - key: OFFLINE_TAKEOVER_MS
+        value: 30000

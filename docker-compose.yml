@@ -1,0 +1,63 @@
+# 用 Docker Compose 起「游戏 + Caddy 自动 HTTPS」。
+#
+# 前提：一台有公网 IP 的服务器，一个解析到它的域名。
+#
+#   echo "BLOKUS_DOMAIN=blokus.example.com" > .env
+#   docker compose up -d
+#
+# 就这样 —— Caddy 会自动申请并续期 Let's Encrypt 证书，
+# 而且它默认就会正确转发 WebSocket 升级（不用像 Nginx 那样手写 Upgrade 头）。
+#
+# 没有域名、只想用 IP + 端口跑：
+#   docker compose up -d blokus
+# 然后访问 http://<服务器IP>:3000
+
+services:
+  blokus:
+    build: .
+    image: blokus:latest
+    restart: unless-stopped
+    environment:
+      PORT: 3000
+      HOST: 0.0.0.0
+      # 想调积分规则就把它挂进来（可选）
+      # AI_DELAY_MS: 650
+      # OFFLINE_TAKEOVER_MS: 30000
+    ports:
+      # 没有域名时把这段放开，直接暴露 3000 端口
+      - '3000:3000'
+    healthcheck:
+      test:
+        - CMD
+        - node
+        - -e
+        - "fetch('http://127.0.0.1:3000/healthz').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    logging:
+      driver: json-file
+      options:
+        max-size: '10m'
+        max-file: '3'
+
+  # 有域名就启用它；Caddy 负责 80/443 和证书
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    ports:
+      - '80:80'
+      - '443:443'
+    environment:
+      BLOKUS_DOMAIN: ${BLOKUS_DOMAIN:-localhost}
+    volumes:
+      - ./deploy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      - blokus
+
+volumes:
+  caddy_data:
+  caddy_config:

@@ -1,0 +1,22 @@
+{
+  "name": "blokus-online",
+  "version": "1.0.0",
+  "private": true,
+  "description": "角斗士棋（Blokus）多人联机版 —— 零依赖：Node 内置 http + 手写 WebSocket，原生 Canvas 前端",
+  "type": "module",
+  "engines": {
+    "node": ">=18"
+  },
+  "scripts": {
+    "start": "node server/index.js",
+    "dev": "node --watch server/index.js",
+    "test": "node --test test/pieces.test.js test/rules.test.js test/scoring.test.js test/config.test.js test/ui.test.js test/ws.test.js test/room.test.js test/web.test.js",
+    "test:inproc": "node --experimental-test-isolation=none --test test/pieces.test.js test/rules.test.js test/scoring.test.js test/config.test.js test/ui.test.js test/ws.test.js test/room.test.js test/web.test.js",
+    "check": "node tools/check-encoding.js && node tools/smoke.js",
+    "check:deploy": "node tools/check-deploy.js",
+    "render": "node tools/render-preview.js && node tools/verify-render.js",
+    "sim": "node tools/sim.js 40 normal ffa"
+  },
+  "dependencies": {},
+  "devDependencies": {}
+}

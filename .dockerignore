@@ -1,0 +1,26 @@
+# 构建镜像时排除的东西 —— 运行期一个都不需要
+.git/
+.gitignore
+
+# 渲染预览产物（art/json 有 2MB，纯属开发期数据）
+art/
+
+# 测试与开发工具
+test/
+tools/
+*.md
+
+# 本地脚本与配置
+start-public.ps1
+blokus.config.json
+docker-compose.yml
+Dockerfile
+.dockerignore
+deploy/
+
+# 编辑器 / 系统
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+*.log

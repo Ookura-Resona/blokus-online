@@ -1,0 +1,25 @@
+# 依赖（本项目零依赖，这个目录正常不会存在）
+node_modules/
+
+# 本地配置：从 blokus.config.example.json 复制而来，每个人可能不同
+blokus.config.json
+
+# docker compose 的域名配置
+.env
+
+# 渲染预览的中间数据（PNG/SVG 保留，JSON 太大）
+art/json/
+
+# 临时/调试产物
+*.log
+.wt.out
+.wt.err
+.dom.txt
+.dom.err.txt
+.edge-profile/
+
+# 编辑器与系统
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db

@@ -1,0 +1,26 @@
+# Caddy 配置：自动申请 HTTPS 证书 + 反向代理。
+#
+# 用 Caddy 而不是 Nginx 的原因：它**默认就会正确转发 WebSocket 升级**，
+# 不需要手写 Upgrade / Connection 头（Nginx 少写这两行的话，
+# 网页能打开、一连 WebSocket 就挂，非常难查）。
+
+{$BLOKUS_DOMAIN:localhost} {
+	encode zstd gzip
+
+	# 代理到 compose 里的游戏服务
+	reverse_proxy blokus:3000 {
+		# 长连接不要被过早掐断
+		transport http {
+			read_timeout 0
+		}
+	}
+
+	# 静态资源不用每次都回源（都是小文件，短缓存即可）
+	@static path /style.css /board.js /app.js /shared/*
+	header @static Cache-Control "public, max-age=300"
+
+	log {
+		output stderr
+		format console
+	}
+}
