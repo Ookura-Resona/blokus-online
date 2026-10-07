@@ -668,7 +668,9 @@ export function installDom(opts) {
       this._ws = null;
 
       const u = new URL(url);
-      connectWs(Number(u.port), { host: u.hostname, path: u.pathname })
+      // 注意是 pathname + search：只取 pathname 会把 ?room=xxx 丢掉，
+      // 于是连到 /ws 上（Worker 那边会回 400），表现为「连上了但永远收不到消息」。
+      connectWs(Number(u.port), { host: u.hostname, path: u.pathname + u.search })
         .then((ws) => {
           this._ws = ws;
           this.readyState = FakeWebSocket.OPEN;
@@ -714,7 +716,11 @@ export function installDom(opts) {
 
     close() {
       this.readyState = FakeWebSocket.CLOSED;
-      this._ws?.close();
+      // 用 destroy 而不是 close：close 只是发个关闭帧就等对端回应，
+      // 对端（workerd 等）不一定会立刻回，于是读取协程里那个长超时定时器
+      // 会把测试进程拖住一两分钟。destroy 直接断，挂起的等待会被立刻唤醒。
+      if (this._ws?.destroy) this._ws.destroy();
+      else this._ws?.close();
     }
   }
 
@@ -745,6 +751,20 @@ export function installDom(opts) {
   setGlobal('prompt', () => {});
   setGlobal('alert', () => {});
   if (!g.crypto) setGlobal('crypto', {});
+
+  // fetch：Node 自带全局 fetch，但它要求绝对 URL，
+  // 而前端代码用的是 '/api/new-room' 这种站内相对路径。这里补上 origin，
+  // 让前端能在测试里真的去请求本进程起的那个服务器。
+  const realFetch = g.fetch?.bind(g);
+  if (realFetch) {
+    const origin = `http://${host}`;
+    setGlobal('fetch', (input, init) => {
+      if (typeof input === 'string' && input.startsWith('/')) {
+        return realFetch(origin + input, init);
+      }
+      return realFetch(input, init);
+    });
+  }
 
   return { document, window, localStorage, FakeWebSocket, FakeNode, FakeCanvas, recorder };
 }

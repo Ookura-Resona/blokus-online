@@ -263,6 +263,22 @@ export class WsConnection extends EventEmitter {
     this.#shutdown();
   }
 
+  /**
+   * 强制断开底层 TCP，不做优雅关闭。
+   * 关服时必须用它：升级成 WebSocket 之后，HTTP 服务器已经不跟踪这些 socket 了，
+   * server.close() / closeAllConnections() 都碰不到它们，会一直等下去。
+   */
+  destroy() {
+    const wasClosed = this.closed;
+    this.closed = true;
+    try {
+      this.#socket.destroy();
+    } catch {
+      /* 忽略 */
+    }
+    if (!wasClosed) this.emit('_closed');
+  }
+
   #shutdown() {
     if (this.closed) return;
     this.closed = true;

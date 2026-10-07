@@ -60,6 +60,10 @@ test(
     const reply = JSON.parse(await ws.nextText());
     assert.equal(reply.echo.hello, '世界');
     assert.equal(reply.n, 1);
+    // RFC 6455 §5.1：服务端发出去的帧**不能**带掩码。
+    // （Cloudflare 的 workerd 在本地模式会加，所以客户端做了容错，
+    //   但对自家实现要严格断言。）
+    assert.equal(ws.sawMaskedServerFrame(), false, '服务端不应给帧加掩码');
     ws.close();
   }),
 );

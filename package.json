@@ -2,21 +2,27 @@
   "name": "blokus-online",
   "version": "1.0.0",
   "private": true,
-  "description": "角斗士棋（Blokus）多人联机版 —— 零依赖：Node 内置 http + 手写 WebSocket，原生 Canvas 前端",
+  "description": "角斗士棋（Blokus）多人在线版 —— 运行时零依赖：Node 内置 http + 手写 RFC 6455 WebSocket，原生 Canvas 前端；也可部署到 Cloudflare Workers + Durable Objects",
   "type": "module",
   "engines": {
     "node": ">=18"
   },
+  "//依赖说明": "dependencies 永远为空。devDependencies 里只有 wrangler，且仅在『部署到 Cloudflare Workers』时才需要；用 `node server/index.js` 自托管的话完全不装任何东西。",
   "scripts": {
     "start": "node server/index.js",
     "dev": "node --watch server/index.js",
-    "test": "node --test test/pieces.test.js test/rules.test.js test/scoring.test.js test/config.test.js test/ui.test.js test/ws.test.js test/room.test.js test/web.test.js",
-    "test:inproc": "node --experimental-test-isolation=none --test test/pieces.test.js test/rules.test.js test/scoring.test.js test/config.test.js test/ui.test.js test/ws.test.js test/room.test.js test/web.test.js",
+    "worker:dev": "wrangler dev --port 8787",
+    "worker:deploy": "wrangler deploy",
+    "assets": "node tools/build-assets.js",
+    "test": "node --test test/pieces.test.js test/rules.test.js test/scoring.test.js test/config.test.js test/ui.test.js test/ws.test.js test/room.test.js test/web.test.js test/worker.test.js",
+    "test:inproc": "node --experimental-test-isolation=none --test test/pieces.test.js test/rules.test.js test/scoring.test.js test/config.test.js test/ui.test.js test/ws.test.js test/room.test.js test/web.test.js test/worker.test.js",
     "check": "node tools/check-encoding.js && node tools/check-case.js && node tools/smoke.js",
     "check:deploy": "node tools/check-deploy.js",
     "render": "node tools/render-preview.js && node tools/verify-render.js",
     "sim": "node tools/sim.js 40 normal ffa"
   },
-  "dependencies": {},
-  "devDependencies": {}
+  "devDependencies": {
+    "wrangler": "^4.148.0"
+  },
+  "dependencies": {}
 }

@@ -1,16 +1,21 @@
 # 角斗士棋 · 多人在线（Blokus Online）
 
-一款**零依赖**的多人联机角斗士棋（Blokus）。四个朋友各自用手机浏览器点开一个链接就能进房间开打，
+一款**运行时零依赖**的多人联机角斗士棋（Blokus）。四个朋友各自用手机浏览器点开一个链接就能进房间开打，
 支持 **四人混战** 与 **二对二** 两种模式、**AI 补位**、完整的规则引擎与积分系统。
 
 - 后端：Node 内置 `http` + **手写的 RFC 6455 WebSocket**（没有 `ws`、没有 `socket.io`）
 - 前端：原生 ES Module + Canvas，**没有构建步骤**、没有打包器
-- 总共 **0 个 npm 依赖** —— 把文件夹拷到任何装了 Node 18+ 的机器上就能跑
-  （开发与测试在 Node 24 上验证；`test/ui.test.js` 会挡住误用 Node 20+ 专有 API 的改动）
+- **`dependencies` 永远是空的** —— 用 `node server/index.js` 自托管的话，一个包都不用装
+- 也可以**一键部署到 Cloudflare Workers + Durable Objects**（免费、不休眠、不用绑卡），
+  这种情况下才需要装一个开发工具 `wrangler`
 
 ```
 21 块棋子 / 89 格 / 91 种朝向    20×20 棋盘    4 个起始角    逆时针轮转
 ```
+
+**两套后端，同一份规则引擎和同一份前端。** `shared/` 里的东西（棋盘、合法性、计分、AI）
+是运行时无关的纯 JS，Node 自托管和 Cloudflare Workers 两边都直接复用，
+所以不可能出现「本地能玩、线上规则不一样」这种事。
 
 ---
 
@@ -43,14 +48,15 @@ HOST=127.0.0.1 PORT=8080 node server/index.js
 
 先说清楚一件事，因为这决定了你该选哪个：
 
-| | 谁在跑服务 | 你的电脑关了还能玩吗 |
-|---|---|---|
-| **场景 A** 同一 WiFi | 你的电脑 | ❌ 不能 |
-| **场景 C** 内网穿透 | 你的电脑 + 一条隧道 | ❌ 不能（隧道随进程一起断） |
-| **场景 B** 云服务器 | 服务器 | ✅ 能 |
-| **场景 D** Render 托管 | Render | ✅ 能 |
+| | 谁在跑服务 | 你的电脑关了还能玩吗 | 会休眠吗 | 要花钱/绑卡吗 |
+|---|---|---|---|---|
+| **场景 A** 同一 WiFi | 你的电脑 | ❌ | — | 不要 |
+| **场景 C** 内网穿透 | 你的电脑 + 一条隧道 | ❌ | — | 不要 |
+| **场景 D** Render | Render | ✅ | ⚠️ 15 分钟没人访问就休眠 | 不要 |
+| **场景 E** Cloudflare Workers | Cloudflare | ✅ | ✅ **不休眠** | 不要 |
+| **场景 B** 云服务器 | 服务器 | ✅ | ✅ | 要（约 $3-5/月） |
 
-**想要「不依赖任何自己的设备、一直在线」，就得走 B 或 D。**
+**想要「不依赖任何自己的设备、一直在线、还免费」，就选场景 E（Cloudflare Workers）。**
 A 和 C 都只是「你自己电脑当服务器」，区别只是别人怎么连进来。
 
 房间是**房间号制**的。创建房间后点「分享邀请链接」，会得到这样的链接：
@@ -163,6 +169,50 @@ Render 会读 `render.yaml`、用 `Dockerfile` 构建，给你一个
 >    想让开局不卡，用 UptimeRobot 之类的免费监控每 5 分钟 ping 一次
 >    `/healthz`，正好卡在休眠阈值内。
 > 2. **休眠会丢掉内存里的房间**，正在进行的对局会没。约局中间别晾太久。
+>
+> 另外 Render 从 2026 年起新账号要绑卡了（免费额度不扣费，但卡要在档）。
+> 不想绑卡就用下面的场景 E。
+
+### 场景 E：Cloudflare Workers（**免费、不休眠、不用绑卡**）
+
+每个房间是一个 Durable Object。免费额度（2026）：
+
+| | 免费额度 | 这个游戏实际用量 |
+|---|---|---|
+| 请求 | 10 万 / 天 | 一局约 70 手 × 4 人广播 ≈ 折算 15 个请求 |
+| 计算时长 | 13000 GB-s / 天 | 一局约 0.2 GB-s |
+
+**每天玩几十局都碰不到额度的零头。**
+
+```bash
+npm install            # 只装 wrangler（开发工具），运行时不装任何东西
+npx wrangler login     # 浏览器里点一下授权（免费账号，不用卡）
+npx wrangler deploy
+```
+
+部署完会打印一个 `https://blokus-online.<你的子域>.workers.dev`，**这就是能发群里的地址**。
+以后改了代码再 `npx wrangler deploy` 一次即可。
+
+想先在本地试：
+
+```bash
+npm run worker:dev     # 起在 http://127.0.0.1:8787，不需要账号
+node tools/check-deploy.js http://127.0.0.1:8787
+```
+
+几个实现上的说明（想知道细节可以看）：
+
+- **为什么一个房间一个 Durable Object**：DO 天生就是「单点串行 + 有状态」，
+  正好等于一个房间需要一个权威服务端 —— 落子校验、AI 调度、座位管理全在同一个
+  实例里串行执行，天然没有并发竞争，一把锁都不用。
+- **房号怎么分配**：客户端先 `GET /api/new-room` 拿房号，再连 `/ws?room=房号`。
+  分配时 DO 会**落一个预定标记** —— 只读不写的话，同一个房号可能被分给两个陌生人。
+- **状态持久化**：每次房间状态变化都写一份快照进 DO 存储。
+  实测过：把 DO 实例彻底杀掉（停掉 wrangler）再重启，房间和棋局能完整恢复，
+  已占格子的颜色全部一致。
+- **静态资源**：`tools/build-assets.js` 从 `public/` 的入口出发做 import 闭包，
+  只把浏览器真正会加载的那几个 `shared/` 模块拷进 `dist/`，
+  **服务端代码（`shared/rooms.js`）不会被带到公网上**，脚本里还有断言盯着这一点。
 
 ### 场景 C：内网穿透（最快能开打，但依赖你的电脑）
 
@@ -361,26 +411,29 @@ node tools/sim.js 20 hard ffa        # 高难度 AI
 
 ```
 Blokus/
-├─ server/
+├─ server/           Node 自托管后端
 │  ├─ index.js       启动入口（读配置、监听端口、打印局域网地址）
 │  ├─ app.js         HTTP + WebSocket 应用工厂（静态托管、路由、心跳）
 │  ├─ ws.js          手写的 RFC 6455 WebSocket 服务端（握手 / 分帧 / 掩码 / ping-pong）
-│  ├─ rooms.js       房间、座位、对局流程、AI 调度、离线托管、会话积分
 │  └─ config.js      读取 blokus.config.json 与环境变量
-├─ shared/           ★ 服务端与浏览器共用同一份源码
+├─ worker/           Cloudflare Workers 后端（和 server/ 共用 shared/）
+│  ├─ index.js       Worker 入口：/ws 路由到 DO、/api/new-room 分配房号、其余静态资源
+│  └─ room.js        房间 Durable Object（WebSocket 包装、状态持久化、加载恢复）
+├─ shared/           ★ 两边共用，且浏览器也直接加载
 │  ├─ constants.js   棋盘规格、座位/颜色、阵营划分、默认积分
 │  ├─ pieces.js      21 枚棋子 + 全部旋转/翻转朝向 + 镜像映射
 │  ├─ rules.js       棋盘状态、落子合法性、轮转、弃权、终局、序列化
 │  ├─ scoring.js     混战/二对二排名、后手优先、统治力与全清奖励
 │  ├─ ai.js          合法着法枚举 + 启发式评分 + 一层前瞻
+│  ├─ rooms.js       房间/座位/对局流程（**运行时无关**：没有 node: 依赖，两边共用）
 │  └─ protocol.js    客户端↔服务端消息类型
 ├─ public/
 │  ├─ index.html     三个界面：首页 / 房间大厅 / 对局
 │  ├─ style.css      移动优先的深色样式
 │  ├─ board.js       Canvas 棋盘渲染 + 触屏交互（拖动/缩放/吸附）
 │  └─ app.js         连接、大厅、对局 UI 与消息处理
-├─ test/             105 个测试，见第七节
-│  ├─ *.test.js      八个测试文件（棋子 / 规则 / 计分 / 配置 / 界面 / WebSocket / 房间 / 前端 e2e）
+├─ test/             111 个测试，见第七节
+│  ├─ *.test.js      九个测试文件
 │  ├─ wsclient.js    独立实现的测试用 WebSocket 客户端（用来校验服务端）
 │  ├─ domstub.js     极简 DOM/Canvas 桩 + 迷你 HTML 解析器
 │  ├─ web-loader.js  把前端的 '/shared/...' 这类 import 映射到磁盘路径
@@ -388,21 +441,18 @@ Blokus/
 ├─ tools/
 │  ├─ sim.js            自对局模拟器（用于标定积分阈值）
 │  ├─ smoke.js          对运行中的服务器做端到端冒烟检查
+│  ├─ check-deploy.js   对已部署的地址做端到端自检（支持 https/wss）
 │  ├─ check-encoding.js 源码编码自检（中文项目必查）
+│  ├─ check-case.js     站内路径大小写（Windows 不区分、Linux 区分）
+│  ├─ check-persistence.js 验证 Durable Object 存储持久化（两阶段，手动重启）
+│  ├─ build-assets.js   生成 Workers 静态资源 dist/（只带浏览器真正需要的模块）
 │  ├─ render-preview.js 录制真实 Canvas 绘制指令并重放成 PNG
 │  ├─ verify-render.js  把重放出来的 PNG 与真实对局状态逐格比对
-│  ├─ check-deploy.js   对已部署的公网地址做端到端自检（含 wss）
-│  ├─ raster.js         零依赖的 Canvas 2D 光栅化器
-│  ├─ png.js / pngread.js  PNG 编解码（只用内置 zlib）
+│  ├─ raster.js / png.js / pngread.js  零依赖的光栅化与 PNG 编解码
 ├─ art/              渲染预览产物（board.png / tray.png / board.svg）
-├─ deploy/
-│  ├─ vps-setup.sh      在一台新服务器上一键装成 systemd 常驻服务
-│  ├─ blokus.service    systemd 单元（含只读文件系统等安全加固）
-│  └─ Caddyfile         Caddy 反代配置（自动 HTTPS + 自动转发 WebSocket）
-├─ Dockerfile         生产镜像（零依赖，无 npm install 步骤）
-├─ docker-compose.yml 游戏 + Caddy 一条命令拉起
-├─ render.yaml        Render.com 一把梭蓝图
-├─ start-public.ps1   Windows 上开临时公网隧道（依赖本机，仅供快速开局）
+├─ deploy/           VPS 部署（systemd 单元 + Caddy 反代配置 + 一键脚本）
+├─ Dockerfile / docker-compose.yml / render.yaml / wrangler.toml   各种部署方式
+├─ start-public.ps1  Windows 上开临时公网隧道（依赖本机，仅供快速开局）
 ├─ blokus.config.example.json   积分规则示例（复制成 blokus.config.json 即生效）
 └─ .gitignore / .gitattributes  后者负责锁死换行符，别删
 ```
@@ -427,18 +477,27 @@ npm test
 > npm run test:inproc
 > ```
 
-**106 个测试，全部通过**（`npm run test:inproc` 约 10 秒跑完）：
+**111 个测试，全部通过**（`npm run test:inproc` 约 10 秒跑完）：
 
 | 文件 | 数量 | 覆盖内容 |
 |---|---|---|
 | `test/pieces.test.js` | 12 | 21 块 / 89 格 / 91 朝向；各棋子对称性；朝向不重复；镜像映射是对合运算 |
 | `test/rules.test.js` | 24 | 首子占角、同色只能角对角、**同色边接触被禁 vs 异色边接触放行**（同几何对照）、逆时针轮转、弃权与终局、序列化往返、整局自对局一致性 |
-| `test/scoring.test.js` | 22 | 名次与增减分、**同分后手优先**、统治力/全清奖励、阈值与开关可配置、二对二组队计分 |
+| `test/scoring.test.js` | 23 | 名次与增减分、**同分后手优先**、统治力/全清奖励、阈值与开关可配置、二对二组队计分 |
 | `test/config.test.js` | 7 | `blokus.config.json` 的读取、嵌套覆盖、环境变量优先级、损坏文件回退、注释键剔除 |
-| `test/ui.test.js` | 11 | **HTML/CSS/JS 的静态一致性**：JS 引用的 id 都存在、id 不重复、`hidden` 兜底规则、外链 CDN 检查、Canvas API typo 检查、Node 18 兼容性守卫、**站内路径大小写**（Windows 不区分、Linux 区分，写错就一部署就挂） |
+| `test/ui.test.js` | 11 | **HTML/CSS/JS 的静态一致性**：JS 引用的 id 都存在、id 不重复、`hidden` 兜底规则、外链 CDN 检查、Canvas API typo 检查、Node 18 兼容性守卫、**站内路径大小写** |
 | `test/ws.test.js` | 14 | 用**独立实现**的客户端校验握手应答值（对上 RFC 6455 官方向量）、7/16/64 位长度、分片拼装、ping/pong、掩码缺失报 1002、超长报 1009 |
 | `test/room.test.js` | 15 | 建房/加入/座位/房主权限/聊天；**两个真实 WebSocket 客户端把整局打完**；非法落子不被接受；离线托管 |
 | `test/web.test.js` | 1 | **加载真实 `index.html` + `app.js` + `board.js`**，连真实服务器，全程只点 UI，把混战和二对二各打完一整局并校验结算浮层 |
+| `test/worker.test.js` | 4 | Cloudflare Workers 专属：房号唯一性（DO 预定标记真的落了）、缺房号被明确拒绝、整局能打完（AI 由 DO 定时器驱动）、**断线重连坐回原座位并恢复棋局** |
+
+`web.test.js` 和 `worker.test.js` 在没起对应后端时会**自动跳过**，所以 `npm test` 在任何环境下都能全绿。
+想连 Workers 一起跑：
+
+```bash
+npm run worker:dev                                     # 一个终端里起本地 Worker
+BLOKUS_TARGET=http://127.0.0.1:8787 npm run test:inproc   # 另一个终端里连它跑
+```
 
 （`web.test.js` 在 `node --test` 里记成 1 个顶层测试，内部含几十条断言。）
 

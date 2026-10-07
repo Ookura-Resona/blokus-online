@@ -2,14 +2,15 @@
  * 部署自检：验证一个**已经部署好的地址**是否完整可用。
  *
  *   node tools/check-deploy.js https://xxx.trycloudflare.com
+ *   node tools/check-deploy.js http://127.0.0.1:8787      ← wrangler dev
  *   node tools/check-deploy.js http://192.168.1.23:3000
  *
  * 和 tools/smoke.js 的区别：smoke.js 假设你就在服务器本机（纯 TCP），
  * 这个是走真实 URL（支持 https/wss），用来验证公网隧道、反向代理、
- * 证书、WebSocket 升级这些「出了本机才有的问题」。
+ * 证书、WebSocket 升级、以及 Cloudflare Workers 那一版。
  *
- * 特别是反向代理：Nginx 少写 `Upgrade`/`Connection` 头的话，
- * 静态页面能打开、但一连 WebSocket 就挂 —— 这个脚本正好能抓到。
+ * 流程按现在的协议走：先 GET /api/new-room 拿房号，再连 /ws?room=房号，
+ * 然后 hello → joinRoom。Node 自托管和 Workers 两边都支持这套。
  */
 
 const target = process.argv[2];
@@ -20,7 +21,6 @@ if (!target) {
 
 const base = target.replace(/\/+$/, '');
 const wsBase = base.replace(/^http/, 'ws');
-const wsUrl = `${wsBase}/ws`;
 
 let failures = 0;
 const ok = (m) => console.log(`  \u2713 ${m}`);
@@ -34,7 +34,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 /* ───────────────────────── 1. HTTP 静态资源 ───────────────────────── */
 
 console.log(`\n检查部署地址：${base}\n`);
-console.log('[1] HTTPS / 静态资源');
+console.log('[1] HTTP / 静态资源');
 
 for (const [path, needle] of [
   ['/', '角斗士棋'],
@@ -57,9 +57,33 @@ for (const [path, needle] of [
   }
 }
 
-/* ───────────────────────── 2. WebSocket 升级 ───────────────────────── */
+/* ─────────────────── 2. 房号分配 + WebSocket 升级 ─────────────────── */
 
-console.log('\n[2] WebSocket（反向代理最容易坏的就是这里）');
+console.log('\n[2] 房号分配与 WebSocket（反向代理/平台最容易坏的就是这里）');
+
+let roomCode = null;
+try {
+  const res = await fetch(`${base}/api/new-room`, { cache: 'no-store' });
+  if (!res.ok) {
+    bad(`/api/new-room -> HTTP ${res.status} ${await res.text()}`);
+  } else {
+    const data = await res.json();
+    if (!/^[A-HJ-NP-Z2-9]{4}$/.test(data.code ?? '')) bad(`房号格式不对：${data.code}`);
+    else {
+      roomCode = data.code;
+      ok(`/api/new-room 分配房号 ${roomCode}`);
+    }
+  }
+} catch (err) {
+  bad(`/api/new-room 请求失败：${err.cause?.code ?? err.message}`);
+}
+
+if (!roomCode) {
+  console.log(`\n拿不到房号，后面的检查没法继续。有 ${failures} 项失败 \u2717\n`);
+  process.exit(1);
+}
+
+const wsUrl = `${wsBase}/ws?room=${roomCode}`;
 console.log(`    目标：${wsUrl}`);
 
 /** 打开一条 WebSocket，返回带消息日志的小封装 */
@@ -120,28 +144,24 @@ function open(label) {
 
 try {
   const a = await open('客户端A');
-  ok('WebSocket 升级成功（wss 握手通过）');
+  ok('WebSocket 升级成功');
   a.send({ t: 'hello', playerId: 'deploy-check-a', name: '部署自检A' });
   const welcome = await a.wait('welcome');
   ok(`收到 welcome：${welcome.you.name}`);
+  a.send({ t: 'joinRoom', code: roomCode });
+  const room = await a.wait('room');
+  ok(`A 进入房间，坐在 ${room.yourSeat} 号位`);
 
   const b = await open('客户端B');
   b.send({ t: 'hello', playerId: 'deploy-check-b', name: '部署自检B' });
   await b.wait('welcome');
-  ok('第二条连接也升级成功');
+  b.send({ t: 'joinRoom', code: roomCode });
+  const roomB = await b.wait('room');
+  ok(`第二条连接也升级成功，坐在 ${roomB.yourSeat} 号位`);
 
   /* ───────────────────── 3. 完整走一遍联机流程 ───────────────────── */
 
   console.log('\n[3] 联机流程');
-
-  a.send({ t: 'createRoom', mode: 'ffa' });
-  const room = await a.wait('room');
-  ok(`建房成功，房号 ${room.code}`);
-
-  b.send({ t: 'joinRoom', code: room.code });
-  const roomB = await b.wait('room');
-  if (roomB.code !== room.code) bad('B 加入后拿到的房号不对');
-  else ok(`B 加入成功，坐在 ${roomB.yourSeat} 号位`);
 
   a.send({ t: 'start' });
   await a.wait('state');
@@ -153,7 +173,6 @@ try {
   while (Date.now() < deadline) {
     const st = a.latest('state');
     if (st && !st.state.over && st.state.turn === 0 && !moved) {
-      // 首子占角：找一个合法的落点
       const { deserializeState } = await import('../shared/rules.js');
       const { chooseMove } = await import('../shared/ai.js');
       const mv = chooseMove(deserializeState(st.state), 0, { difficulty: 'easy' });
@@ -191,7 +210,7 @@ try {
   const errs = [...a.errors, ...b.errors];
   if (errs.length) bad(`连接期间出现错误：${errs.join('; ')}`);
 
-  console.log(`\n邀请链接：${base}/?r=${room.code}`);
+  console.log(`\n邀请链接：${base}/?r=${roomCode}`);
   try {
     a.ws.close();
     b.ws.close();
@@ -201,8 +220,6 @@ try {
 } catch (err) {
   bad(err.message);
 }
-
-void 0;
 
 console.log(failures === 0 ? '\n部署自检全部通过 \u2713\n' : `\n有 ${failures} 项失败 \u2717\n`);
 process.exit(failures === 0 ? 0 : 1);

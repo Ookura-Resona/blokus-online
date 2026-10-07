@@ -48,7 +48,7 @@ export function expectedAccept(key) {
   return createHash('sha1').update(key + GUID).digest('base64');
 }
 
-/** 从缓冲区里解析一个服务端 → 客户端的帧（服务端帧不带掩码） */
+/** 从缓冲区里解析一个服务端 → 客户端的帧 */
 function parseServerFrame(state) {
   const buf = state.buffer;
   if (buf.length < 2) return null;
@@ -68,12 +68,28 @@ function parseServerFrame(state) {
     len = Number(buf.readBigUInt64BE(2));
     offset = 10;
   }
-  if (masked) throw new Error('服务端不应发送带掩码的帧');
+
+  // RFC 6455 规定服务端**不能**给帧加掩码。但 Cloudflare 的 workerd 在
+  // `wrangler dev` 本地模式下会加（生产环境由边缘处理），所以这里容错解掩码，
+  // 同时记一个标记 —— ws.test.js 会用这个标记断言「我们自己的服务端没加掩码」。
+  let maskKey = null;
+  if (masked) {
+    if (buf.length < offset + 4) return null;
+    maskKey = buf.subarray(offset, offset + 4);
+    offset += 4;
+    state.sawMaskedServerFrame = true;
+  }
+
   if (buf.length < offset + len) return null;
-  const payload = buf.subarray(offset, offset + len);
+  let payload = buf.subarray(offset, offset + len);
+  if (maskKey) {
+    const plain = Buffer.allocUnsafe(len);
+    for (let i = 0; i < len; i++) plain[i] = payload[i] ^ maskKey[i & 3];
+    payload = plain;
+  }
   state.buffer = buf.subarray(offset + len);
   if (!fin) throw new Error('测试客户端不支持分片的服务端帧');
-  return { opcode, payload };
+  return { opcode, payload, masked };
 }
 
 /**
@@ -168,6 +184,20 @@ export function connectWs(port, { host = '127.0.0.1', path = '/ws' } = {}) {
         const end = state.buffer.indexOf('\r\n\r\n');
         if (end === -1) return;
         state.handshakeRaw = state.buffer.subarray(0, end + 4).toString('latin1');
+
+        // 必须校验状态码是 101。否则服务端回 400/404 时，解析器会一路
+        // 「成功」下去，表现为「连接建立了但永远收不到消息」，非常难查。
+        if (!/^HTTP\/1\.1 101\b/.test(state.handshakeRaw)) {
+          const first = state.handshakeRaw.split('\r\n')[0];
+          reject(new Error(`WebSocket 升级失败：服务端返回「${first}」而不是 101`));
+          try {
+            socket.destroy();
+          } catch {
+            /* 忽略 */
+          }
+          return;
+        }
+
         state.buffer = state.buffer.subarray(end + 4);
         state.handshakeDone = true;
         resolve(makeApi(state));
@@ -400,6 +430,11 @@ function makeApi(state) {
     /** 日志里出现过的所有错误消息文本 */
     errors() {
       return api.all('error').map((m) => m.message);
+    },
+
+    /** 服务端有没有给帧加掩码（RFC 6455 规定不该加；自家服务端应当始终是 false） */
+    sawMaskedServerFrame() {
+      return !!state.sawMaskedServerFrame;
     },
 
     /** 等待连接被服务端关闭，返回 { code, reason } */

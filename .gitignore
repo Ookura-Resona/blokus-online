@@ -1,5 +1,10 @@
-# 依赖（本项目零依赖，这个目录正常不会存在）
+# 依赖（自托管时这个目录正常不会存在；只有部署 Workers 才装 wrangler）
 node_modules/
+
+# Cloudflare Workers 的本地状态与构建产物
+.wrangler/
+dist/
+.persist-check.json
 
 # 本地配置：从 blokus.config.example.json 复制而来，每个人可能不同
 blokus.config.json

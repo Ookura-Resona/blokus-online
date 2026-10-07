@@ -225,9 +225,22 @@ test('二对二：对角为一队，胜负与结算按队伍给分', async () =>
     assert.deepEqual(result.teams[0].seats, [0, 2]);
     assert.deepEqual(result.teams[1].seats, [1, 3]);
 
-    // 座位 0、2 增减分一致；1、3 一致；且胜方为正、败方为负
-    assert.equal(result.deltas[0], result.deltas[2]);
-    assert.equal(result.deltas[1], result.deltas[3]);
+    // 同队两人的**基础**增减分必须一致。
+    // 注意不能直接比 deltas：全清奖励是按人头给的，队友里只有一个把
+    // 21 块下完时，两人会差 1 分。所以要把奖励扣掉再比。
+    const bonusOf = (seat) =>
+      (result.bonuses ?? []).filter((b) => b.seat === seat).reduce((a, b) => a + b.points, 0);
+    assert.equal(
+      result.deltas[0] - bonusOf(0),
+      result.deltas[2] - bonusOf(2),
+      '同队的两人基础增减分应当一致',
+    );
+    assert.equal(
+      result.deltas[1] - bonusOf(1),
+      result.deltas[3] - bonusOf(3),
+      '另一队同理',
+    );
+
     const team0Won = result.teams[0].win;
     assert.ok(team0Won ? result.deltas[0] > 0 : result.deltas[0] < 0, '胜方应当加分');
     assert.ok(team0Won ? result.deltas[1] < 0 : result.deltas[1] > 0, '败方应当扣分');

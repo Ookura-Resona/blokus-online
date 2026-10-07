@@ -43,13 +43,39 @@ async function until(fn, timeoutMs = 8000, label = '条件') {
   }
 }
 
-test('前端 e2e：加载真实页面，只用点击 UI 打完混战与二对二', async () => {
-  /* ---------------- 起服务器 + 装 DOM + 加载前端 ---------------- */
-  const serverApp = createApp({ aiDelayMs: 5 });
-  await new Promise((r) => serverApp.server.listen(0, '127.0.0.1', r));
-  const port = serverApp.server.address().port;
+/**
+ * 默认在进程内起一个 Node 服务器来跑。
+ * 设了 BLOKUS_TARGET 就改跑那个地址 —— 同一份测试也能用来验证
+ * Cloudflare Workers 版本（前端代码两边完全一样）：
+ *
+ *   BLOKUS_TARGET=http://127.0.0.1:8787 node --test test/web.test.js
+ */
+const TARGET = process.env.BLOKUS_TARGET ?? '';
 
-  installDom({ host: `127.0.0.1:${port}`, html: INDEX_HTML });
+test('前端 e2e：加载真实页面，只用点击 UI 打完混战与二对二', async (t) => {
+  /* ---------- 起服务器（或复用外部目标）+ 装 DOM + 加载前端 ---------- */
+  let serverApp = null;
+  let host;
+  let scheme = 'http:';
+
+  if (TARGET) {
+    const u = new URL(TARGET);
+    host = u.host;
+    scheme = u.protocol;
+    console.error(`  （外部目标模式：${TARGET}）`);
+  } else {
+    serverApp = createApp({ aiDelayMs: 5 });
+    await new Promise((r) => serverApp.server.listen(0, '127.0.0.1', r));
+    host = `127.0.0.1:${serverApp.server.address().port}`;
+  }
+
+  if (scheme === 'https:') {
+    // DOM 桩里的 WebSocket 是明文 TCP 实现，跑不了 wss。
+    t.skip(`BLOKUS_TARGET 用的是 https（${TARGET}），测试桩不支持 wss`);
+    return;
+  }
+
+  installDom({ host, html: INDEX_HTML });
   await import('../public/app.js');
 
   const hook = globalThis.window.__blokus;
@@ -81,8 +107,12 @@ test('前端 e2e：加载真实页面，只用点击 UI 打完混战与二对二
   }
 
   try {
-    /* ---------------- 1. 首页 / 连接 ---------------- */
-    await until(() => client.connected, 8000, '前端连上 WebSocket');
+    /* ---------------- 1. 首页 ---------------- */
+    // 现在「没进房间就不连 WebSocket」（房间是按房号连到对应实例的），
+    // 所以这里先确认首页状态，连接要等创建房间之后才建立。
+    assert.equal(client.roomCode, null, '一进来不应该已经在房间里');
+    assert.equal(client.connected, false, '没进房间就不该占着 WebSocket 连接');
+    assert.equal(el.screenHome.classList.contains('is-active'), true, '应当停在首页');
 
     // 页面结构应当被正确解析：这些静态元素必须存在
     for (const id of ['screen-home', 'screen-room', 'screen-game', 'turn-banner', 'tray', 'board', 'result-modal', 'sheet']) {
@@ -93,13 +123,15 @@ test('前端 e2e：加载真实页面，只用点击 UI 打完混战与二对二
     assert.ok(el.segMode.querySelector('[data-mode="ffa"]'), '模式分段按钮必须存在');
     assert.ok(el.segDifficulty.querySelector('[data-difficulty="hard"]'), '难度分段按钮必须存在');
 
-    /* ---------------- 2. 创建房间 ---------------- */
+    /* ---------- 2. 创建房间（会先向 /api/new-room 要房号） ---------- */
     el.inputName.value = '前端测试员';
     el.btnCreate.click();
 
-    const room = await until(() => client.room, 8000, '收到房间信息');
+    const room = await until(() => client.room, 10000, '收到房间信息');
     assert.match(room.code, /^[A-HJ-NP-Z2-9]{4}$/, '房号格式不对');
     assert.equal(room.yourSeat, 0);
+    assert.equal(client.roomCode, room.code, '前端应当记住房号（重连要用）');
+    assert.equal(client.connected, true, '进房间后应当已连上');
     assert.equal(el.roomCode.textContent, room.code, '房号应当显示在页面上');
 
     const seatCards = el.seatList.querySelectorAll('.seat-card');
@@ -276,10 +308,15 @@ test('前端 e2e：加载真实页面，只用点击 UI 打完混战与二对二
 
     /* ---------------- 13. 邀请链接格式 ---------------- */
     assert.match(client.roomCode, /^[A-HJ-NP-Z2-9]{4}$/);
-    assert.equal(`http://127.0.0.1:${port}/?r=${client.roomCode}`, `http://127.0.0.1:${port}/?r=${client.roomCode}`);
+    // 邀请链接 = 当前站点 + ?r=房号（前端用的是 location.host）
+    assert.equal(
+      `${scheme}//${host}/?r=${client.roomCode}`,
+      `${scheme}//${host}/?r=${client.roomCode.replace(/[^A-Z0-9]/g, '')}`,
+    );
   } finally {
     // 先停掉前端的自动重连与 WebSocket，否则定时器会让测试进程无法退出
     hook.disconnect();
-    await serverApp.close();
+    // 外部目标模式下没有本地服务器要关
+    if (serverApp) await serverApp.close();
   }
 });

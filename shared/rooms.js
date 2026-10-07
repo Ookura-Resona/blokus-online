@@ -1,15 +1,19 @@
 /**
  * 房间与对局流程管理。
  *
+ * ⚠️ 这个文件**同时被 Node 服务器和 Cloudflare Worker 使用**，
+ * 所以只能依赖两种运行时都有的东西：setTimeout / clearTimeout /
+ * globalThis.crypto。不要在这里 import 任何 node: 模块。
+ *
  * 设计要点：
  *  - 服务端权威：所有落子都在服务端用规则引擎校验，客户端只做本地预演。
  *  - 一个 room 有 4 个座位，可以是 人 / AI / 空。
  *  - 观众（没座位的人）也能看到棋盘与聊天。
  *  - 连接断开 ≠ 离开房间：座位保留，界面显示离线；若轮到他且离线过久，
  *    服务端会自动托管一手，避免整局卡死。
+ *  - **单房间模式**：Cloudflare Durable Object 里每个实例只承载一个房间，
+ *    传 singleRoomCode 即可；此时不起定时清理器。
  */
-
-import { randomUUID } from 'node:crypto';
 
 import {
   MODE_FFA,
@@ -18,7 +22,7 @@ import {
   SEAT_COUNT,
   DEFAULT_SCORING,
   DIFFICULTY_NORMAL,
-} from '../shared/constants.js';
+} from './constants.js';
 import {
   createState,
   serializeState,
@@ -27,10 +31,17 @@ import {
   hasAnyMove,
   passSeat,
   settle,
-} from '../shared/rules.js';
-import { computeScore } from '../shared/scoring.js';
-import { chooseMove } from '../shared/ai.js';
-import { C2S, S2C } from '../shared/protocol.js';
+} from './rules.js';
+import { computeScore } from './scoring.js';
+import { chooseMove } from './ai.js';
+import { C2S, S2C } from './protocol.js';
+
+/** 生成一个 ID。globalThis.crypto 在 Node 18+ 和 Workers 里都有 */
+function uuid() {
+  const c = globalThis.crypto;
+  if (c?.randomUUID) return c.randomUUID();
+  return `p-${Math.random().toString(36).slice(2)}${Date.now().toString(36)}`;
+}
 
 /** 房号字符集：去掉了容易看错的 I O 0 1 */
 const CODE_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
@@ -52,6 +63,8 @@ function randomCode() {
   return out;
 }
 
+export { randomCode, CODE_ALPHABET, CODE_LENGTH };
+
 function cleanName(raw, fallback) {
   const s = String(raw ?? '').trim().replace(/\s+/g, ' ').slice(0, 16);
   return s || fallback;
@@ -64,12 +77,29 @@ export class RoomManager {
     this.scoring = options.scoring ?? DEFAULT_SCORING;
     this.aiDelayMs = options.aiDelayMs ?? AI_DELAY_MS;
     this.offlineTakeoverMs = options.offlineTakeoverMs ?? OFFLINE_TAKEOVER_MS;
-    this.reaper = setInterval(() => this.reap(), 60_000);
-    this.reaper.unref?.();
+
+    /**
+     * 单房间模式（Durable Object 用）：固定房号，get() 永远返回这一个房间。
+     */
+    this.singleRoomCode = options.singleRoomCode
+      ? String(options.singleRoomCode).toUpperCase().trim()
+      : null;
+
+    /** 状态变化后的回调（DO 用它把房间持久化下来） */
+    this.onChange = options.onChange ?? null;
+
+    this.reaper = null;
+    // 定时清理只在「一个进程管很多房间」的 Node 服务器里需要。
+    // DO 里每个实例只管一个房间，而且随时可能被休眠，不需要也不能起定时器。
+    if (!this.singleRoomCode && typeof setInterval === 'function') {
+      this.reaper = setInterval(() => this.reap(), 60_000);
+      this.reaper.unref?.();
+    }
   }
 
   stop() {
-    clearInterval(this.reaper);
+    if (this.reaper) clearInterval(this.reaper);
+    this.reaper = null;
     for (const room of this.rooms.values()) clearTimeout(room.aiTimer);
     this.rooms.clear();
   }
@@ -86,19 +116,16 @@ export class RoomManager {
   }
 
   get(code) {
+    if (this.singleRoomCode) return this.rooms.get(this.singleRoomCode) ?? null;
     return this.rooms.get(String(code ?? '').toUpperCase().trim()) ?? null;
   }
 
-  create(hostConn) {
-    let code = randomCode();
-    let guard = 0;
-    while (this.rooms.has(code) && guard++ < 500) code = randomCode();
-
-    const room = {
+  #makeRoom(code, hostId) {
+    return {
       code,
       createdAt: Date.now(),
       lastActivity: Date.now(),
-      hostId: hostConn.data.playerId,
+      hostId: hostId ?? null,
       mode: MODE_FFA,
       difficulty: DIFFICULTY_NORMAL,
       scoring: this.scoring,
@@ -119,7 +146,47 @@ export class RoomManager {
       aiTimer: null,
       gameNo: 0,
     };
+  }
+
+  create(hostConn) {
+    // 单房间模式：房间固定，已存在就直接返回
+    if (this.singleRoomCode) {
+      let room = this.rooms.get(this.singleRoomCode);
+      if (!room) {
+        room = this.#makeRoom(this.singleRoomCode, hostConn?.data?.playerId ?? null);
+        this.rooms.set(this.singleRoomCode, room);
+      }
+      return room;
+    }
+
+    let code = randomCode();
+    let guard = 0;
+    while (this.rooms.has(code) && guard++ < 500) code = randomCode();
+
+    const room = this.#makeRoom(code, hostConn?.data?.playerId ?? null);
     this.rooms.set(code, room);
+    return room;
+  }
+
+  /** 单房间模式：确保房间已创建（DO 可以在 fetch 里先调一次） */
+  ensureRoom() {
+    return this.create(null);
+  }
+
+  /**
+   * 用**指定房号**建房。
+   * Node 版的 /api/new-room 必须先建房再让客户端 joinRoom，
+   * 否则 joinRoom 会报「房号不存在」。
+   * （Worker 版不需要：那边的 Durable Object 是客户端连上来时才实例化的，
+   *   房号本身就是实例标识。）
+   */
+  createWithCode(code) {
+    const clean = String(code ?? '').toUpperCase().trim();
+    if (!clean) return null;
+    const existing = this.rooms.get(clean);
+    if (existing) return existing;
+    const room = this.#makeRoom(clean, null);
+    this.rooms.set(clean, room);
     return room;
   }
 }
@@ -157,8 +224,14 @@ export class RoomHub {
     this.send(conn, { t: S2C.ERROR, message });
   }
 
+  /**
+   * 标记房间有变化。
+   * 所有会改状态的地方都会调它，所以这里也是**唯一**的持久化钩子 ——
+   * Durable Object 通过 manager.onChange 把房间快照写进存储。
+   */
   touch(room) {
     room.lastActivity = Date.now();
+    this.manager.onChange?.(room);
   }
 
   /* --------------------------- 序列化 --------------------------- */
@@ -246,6 +319,9 @@ export class RoomHub {
         data.seat = open;
       }
     }
+
+    // 房间里还没有房主（单房间模式下房间是先于玩家存在的）→ 第一个进来的人当房主
+    if (!room.hostId) room.hostId = data.playerId;
 
     this.touch(room);
     this.broadcastRoom(room);
@@ -600,6 +676,8 @@ export class RoomHub {
       }
     }
 
+    // 结算也是一个状态变化，必须让 DO 持久化 —— 否则休眠后回来会看不到结果
+    this.touch(room);
     this.broadcastRoom(room);
     this.broadcast(room, { t: S2C.RESULT, result: this.publicResult(room) });
   }
@@ -650,7 +728,7 @@ export class RoomHub {
 
     switch (t) {
       case C2S.HELLO: {
-        conn.data.playerId = String(msg.playerId ?? '').slice(0, 64) || randomUUID();
+        conn.data.playerId = String(msg.playerId ?? '').slice(0, 64) || uuid();
         conn.data.name = cleanName(msg.name, `玩家${Math.floor(Math.random() * 9000) + 1000}`);
         this.send(conn, {
           t: S2C.WELCOME,

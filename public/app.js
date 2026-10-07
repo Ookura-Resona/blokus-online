@@ -154,9 +154,17 @@ const app = {
 
 /* ══════════════════════════ WebSocket ══════════════════════════ */
 
+/**
+ * 连接地址带上房号。
+ *
+ * 这是为了 Cloudflare Workers 那一版：那边的房间是 Durable Object，
+ * 「一个房号一个实例」，所以必须先知道房号才能连到正确的房间上。
+ * Node 自托管版本无所谓（一个进程管所有房间），多带个查询参数也不影响。
+ */
 function wsUrl() {
   const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
-  return `${proto}//${location.host}/ws`;
+  const q = app.roomCode ? `?room=${encodeURIComponent(app.roomCode)}` : '';
+  return `${proto}//${location.host}/ws${q}`;
 }
 
 function send(obj) {
@@ -171,8 +179,54 @@ function setConn(state, text) {
   el.connText.textContent = text;
 }
 
+/** 进入房间：先定下房号，再按房号连到对应的房间实例 */
+function enterRoom(code) {
+  const clean = String(code ?? '')
+    .toUpperCase()
+    .replace(/[^A-Z0-9]/g, '')
+    .slice(0, 4);
+  if (clean.length !== 4) {
+    el.homeHint.textContent = '房号是 4 位字符，例如 A7KQ。';
+    return false;
+  }
+
+  app.roomCode = clean;
+  app.room = null;
+  app.lastState = null;
+  app.result = null;
+  app.seenLogLength = 0;
+  app.reconnectDelay = 800;
+  app.shuttingDown = false; // 之前离开过房间的话，这里重新放行重连
+  el.homeHint.textContent = '';
+  el.inputCode.value = clean;
+  closeResult();
+  showScreen('room');
+  connect();
+  return true;
+}
+
+/** 离开房间：关掉连接（服务端会在断开时回收座位） */
+function leaveRoom() {
+  app.roomCode = null;
+  app.room = null;
+  app.lastState = null;
+  app.result = null;
+  app.seenLogLength = 0;
+  disconnect();
+  app.shuttingDown = false; // 之后还要能再进别的房间
+  closeResult();
+  showScreen('home');
+  history.replaceState(null, '', location.pathname);
+}
+
 function connect() {
-  setConn('connecting', '正在连接服务器…');
+  if (!app.roomCode) return; // 还没进房间，不需要连着
+  // 已经在连 / 已经连上了就别重复开
+  if (app.ws && (app.ws.readyState === WebSocket.CONNECTING || app.ws.readyState === WebSocket.OPEN)) {
+    return;
+  }
+
+  setConn('connecting', '正在连接房间…');
   let ws;
   try {
     ws = new WebSocket(wsUrl());
@@ -188,10 +242,8 @@ function connect() {
     app.reconnectDelay = 800;
     setConn('ok', '已连接');
     el.connBar.hidden = true;
+    // 先 hello 拿到身份，服务端回 welcome 之后再 joinRoom
     send({ t: C2S.HELLO, playerId, name: currentName() });
-    app.helloDone = true;
-    // 断线重连后自动回到原来的房间
-    if (app.roomCode) send({ t: C2S.JOIN_ROOM, code: app.roomCode });
   });
 
   ws.addEventListener('message', (ev) => {
@@ -207,8 +259,8 @@ function connect() {
   ws.addEventListener('close', () => {
     app.connected = false;
     app.helloDone = false;
-    if (!app.roomCode) setConn('bad', '与服务器断开，正在重连…');
-    else setConn('bad', '连接断开，正在重连…');
+    if (app.shuttingDown || !app.roomCode) return;
+    setConn('bad', '连接断开，正在重连…');
     scheduleReconnect();
   });
 
@@ -251,6 +303,9 @@ function handleMessage(msg) {
     case S2C.WELCOME:
       playerId = msg.you.playerId;
       localStorage.setItem('blokus.pid', playerId);
+      app.helloDone = true;
+      // 拿到身份之后再进房间。重连时服务端会按 playerId 把人放回原来的座位。
+      if (app.roomCode) send({ t: C2S.JOIN_ROOM, code: app.roomCode });
       break;
 
     case S2C.ROOM:
@@ -837,20 +892,26 @@ function closeResult() {
 
 /* ══════════════════════════ 事件绑定 ══════════════════════════ */
 
-el.btnCreate.addEventListener('click', () => {
+el.btnCreate.addEventListener('click', async () => {
   localStorage.setItem('blokus.name', currentName());
-  send({ t: C2S.CREATE_ROOM });
+  el.homeHint.textContent = '正在分配房号…';
+  el.btnCreate.disabled = true;
+  try {
+    // 先向服务器要一个没被占用的房号，再按房号连到对应的房间实例
+    const res = await fetch('/api/new-room', { cache: 'no-store' });
+    if (!res.ok) throw new Error(`服务器返回 ${res.status}`);
+    const { code } = await res.json();
+    enterRoom(code);
+  } catch (err) {
+    el.homeHint.textContent = `建房失败：${err.message}`;
+  } finally {
+    el.btnCreate.disabled = false;
+  }
 });
 
 el.btnJoin.addEventListener('click', () => {
-  const code = el.inputCode.value.trim().toUpperCase();
-  if (code.length !== 4) {
-    el.homeHint.textContent = '房号是 4 位字符，例如 A7KQ。';
-    return;
-  }
   localStorage.setItem('blokus.name', currentName());
-  el.homeHint.textContent = '';
-  send({ t: C2S.JOIN_ROOM, code });
+  enterRoom(el.inputCode.value);
 });
 
 el.inputCode.addEventListener('input', () => {
@@ -930,7 +991,8 @@ el.btnBackRoom.addEventListener('click', () => {
 });
 
 el.btnLeave.addEventListener('click', () => {
-  send({ t: C2S.LEAVE_ROOM });
+  // 直接断开连接即可：服务端在 socket 关闭时会回收座位/标记离线
+  leaveRoom();
 });
 
 el.chatForm.addEventListener('submit', (e) => {
@@ -988,29 +1050,23 @@ document.addEventListener('visibilitychange', () => {
 
 /* ══════════════════════════ 启动 ══════════════════════════ */
 
+// 注意：这里**不再**一上来就连 WebSocket。
+// 房间是「按房号连」的（Cloudflare Workers 那边一个房号一个 Durable Object），
+// 所以要先有房号才建立连接 —— 没进房间就不必占一条长连接。
 connect();
 
 // 供自动化测试与线上排查使用（浏览器控制台里可以直接 __blokus.board 看状态）
-window.__blokus = { app, board, send, showScreen, disconnect, el };
+window.__blokus = { app, board, send, showScreen, enterRoom, leaveRoom, disconnect, el };
 
 // 关页面时干净地断开，省得浏览器控制台里报一堆重连失败
 window.addEventListener('pagehide', disconnect);
 
-// 群里点开邀请链接：已经存过昵称就自动加入，否则让他填个名字点一下就行
+// 群里点开邀请链接：已经存过昵称就直接进，否则让他填个名字点一下
 if (urlRoom) {
-  el.homeHint.textContent = `正在加入房间 ${urlRoom}…`;
-  const tryAutoJoin = () => {
-    if (!app.connected) {
-      setTimeout(tryAutoJoin, 120);
-      return;
-    }
-    if (savedName) {
-      send({ t: C2S.JOIN_ROOM, code: urlRoom });
-      el.homeHint.textContent = '';
-    } else {
-      el.homeHint.textContent = `填个昵称，点「加入」进入房间 ${urlRoom}`;
-      el.inputName.focus();
-    }
-  };
-  tryAutoJoin();
+  if (savedName) {
+    enterRoom(urlRoom);
+  } else {
+    el.homeHint.textContent = `填个昵称，点「加入」进入房间 ${urlRoom}`;
+    el.inputName.focus();
+  }
 }

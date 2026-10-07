@@ -170,6 +170,23 @@ test('二对二：败方即使全清也没有奖励', () => {
   assert.equal(r.deltas[3], -1);
 });
 
+test('二对二：全清奖励按人头算，同队两人可能差 1 分', () => {
+  // 座位 0 把 21 块下完（剩 0），队友座位 2 还剩几块 → 只有座位 0 拿全清奖励。
+  // 这条是补的回归：曾经我以为「同队两人分数必然相等」，结果测试偶发失败。
+  const st = build(MODE_TEAM, [40, 10, 20, 5], [0, 21, 4, 21]);
+  const r = computeScore(st);
+  assert.equal(r.teams[0].win, true, '阵营 0 应当获胜');
+
+  const fc = r.bonuses.filter((b) => b.kind === 'fullClear').map((b) => b.seat);
+  assert.deepEqual(fc, [0], '只有把 21 块下完的那个队友拿全清奖励');
+
+  // 基础分部分（胜方每人 +2）依然一致，差的那 1 分完全来自全清奖励
+  const bonusOf = (seat) =>
+    r.bonuses.filter((b) => b.seat === seat).reduce((a, b) => a + b.points, 0);
+  assert.equal(r.deltas[0] - bonusOf(0), r.deltas[2] - bonusOf(2), '同队基础增减分必须一致');
+  assert.equal(r.deltas[0] - r.deltas[2], 1, '座位 0 比队友多 1 分');
+});
+
 /* ------------------------------ 其它 ------------------------------ */
 
 test('战报文本包含关键信息', () => {
