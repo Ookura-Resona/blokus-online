@@ -185,13 +185,18 @@ Render 会读 `render.yaml`、用 `Dockerfile` 构建，给你一个
 **每天玩几十局都碰不到额度的零头。**
 
 ```bash
+cd Blokus              # ← 必须在项目根目录里执行！跑错目录会得到一个很误导人的报错，见第八节
 npm install            # 只装 wrangler（开发工具），运行时不装任何东西
 npx wrangler login     # 浏览器里点一下授权（免费账号，不用卡）
-npx wrangler deploy
+npm run worker:deploy  # 会先做前置自检 + 生成静态资源，再调 wrangler deploy
 ```
 
 部署完会打印一个 `https://blokus-online.<你的子域>.workers.dev`，**这就是能发群里的地址**。
-以后改了代码再 `npx wrangler deploy` 一次即可。
+以后改了代码再 `npm run worker:deploy` 一次即可。
+
+> **用 `npm run worker:deploy` 而不是裸 `npx wrangler deploy`**：npm 会自动把工作目录切到
+> `package.json` 所在处，这样就算你在别的目录里执行也不会跑错地方。
+> 而且这条命令会先跑前置自检和静态资源构建，出问题时报的错比 wrangler 清楚得多。
 
 想先在本地试：
 
@@ -446,6 +451,7 @@ Blokus/
 │  ├─ check-syntax.js   全项目 JS 语法检查（语法错误未必被测试覆盖到）
 │  ├─ check-case.js     站内路径大小写（Windows 不区分、Linux 区分）
 │  ├─ check-persistence.js 验证 Durable Object 存储持久化（两阶段，手动重启）
+│  ├─ worker-preflight.js  部署 Worker 的前置检查（把「跑错目录」翻译成人话）
 │  ├─ build-assets.js   生成 Workers 静态资源 dist/（只带浏览器真正需要的模块）
 │  ├─ render-preview.js 录制真实 Canvas 绘制指令并重放成 PNG
 │  ├─ verify-render.js  把重放出来的 PNG 与真实对局状态逐格比对
@@ -478,7 +484,7 @@ npm test
 > npm run test:inproc
 > ```
 
-**112 个测试，全部通过**（`npm run test:inproc` 约 11 秒跑完）：
+**114 个测试，全部通过**（`npm run test:inproc` 约 12 秒跑完）：
 
 | 文件 | 数量 | 覆盖内容 |
 |---|---|---|
@@ -486,7 +492,7 @@ npm test
 | `test/rules.test.js` | 24 | 首子占角、同色只能角对角、**同色边接触被禁 vs 异色边接触放行**（同几何对照）、逆时针轮转、弃权与终局、序列化往返、整局自对局一致性 |
 | `test/scoring.test.js` | 23 | 名次与增减分、**同分后手优先**、统治力/全清奖励、阈值与开关可配置、二对二组队计分 |
 | `test/config.test.js` | 7 | `blokus.config.json` 的读取、嵌套覆盖、环境变量优先级、损坏文件回退、注释键剔除 |
-| `test/ui.test.js` | 12 | **HTML/CSS/JS 的静态一致性**：JS 引用的 id 都存在、id 不重复、`hidden` 兜底规则、外链 CDN 检查、Canvas API typo 检查、Node 18 兼容性守卫、**站内路径大小写**、**全项目语法检查** |
+| `test/ui.test.js` | 14 | **HTML/CSS/JS 的静态一致性**：JS 引用的 id 都存在、id 不重复、`hidden` 兜底规则、外链 CDN 检查、Canvas API typo 检查、Node 18 兼容性守卫、**站内路径大小写**、**全项目语法检查**、**部署前置检查**、**wrangler 部署配置齐备** |
 | `test/ws.test.js` | 14 | 用**独立实现**的客户端校验握手应答值（对上 RFC 6455 官方向量）、7/16/64 位长度、分片拼装、ping/pong、掩码缺失报 1002、超长报 1009 |
 | `test/room.test.js` | 15 | 建房/加入/座位/房主权限/聊天；**两个真实 WebSocket 客户端把整局打完**；非法落子不被接受；离线托管 |
 | `test/web.test.js` | 1 | **加载真实 `index.html` + `app.js` + `board.js`**，连真实服务器，全程只点 UI，把混战和二对二各打完一整局并校验结算浮层 |
@@ -568,6 +574,28 @@ node tools/verify-render.js    # 把 PNG 的像素与真实对局状态逐格比
 ---
 
 ## 八、常见问题
+
+**`wrangler` 报 `Could not detect a directory containing static files (e.g. html, css and js) for the project`？**
+
+**几乎肯定是跑错目录了，不是缺静态文件。**
+
+wrangler 找不到 `wrangler.toml` 时不会说「配置文件在哪」，而是退回 **autoconfig** 流程去猜项目结构；
+猜不到静态目录就抛这句话。实际踩过的情形：在 `D:\GAME1` 而不是 `D:\GAME1\Blokus` 里执行了 `npx wrangler deploy`。
+
+（这个报错文本来自 wrangler 的 `getDetailsForAutoConfig`，
+见 [workers-sdk 的说明](https://github.com/cloudflare/workers-sdk/commit/c8dda162976720d02089579a50c6efdc5f1d8ced)：
+它是在 autoconfig 检测不到输出目录时给出的提示。）
+
+怎么办：
+
+```bash
+cd <项目根目录>          # 有 wrangler.toml 的那一层
+npm run worker:preflight # 会明确告诉你当前目录对不对、缺什么
+npm run worker:deploy    # 自检 → 生成静态资源 → wrangler deploy
+```
+
+`npm run worker:deploy` 比裸 `npx wrangler deploy` 稳，因为 **npm 会自动把工作目录切到
+`package.json` 所在处**，你在哪个目录执行都不会跑偏；而且它会先自检再调 wrangler。
 
 **手机打不开 `http://192.168.x.x:3000/`？**
 1. 确认手机和电脑在同一个 WiFi（不是手机流量）。

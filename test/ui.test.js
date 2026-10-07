@@ -178,3 +178,58 @@ test('所有 JS 文件语法正确（防止改坏某个文件却没被任何测�
   const bad = findSyntaxErrors();
   assert.deepEqual(bad, [], `这些文件语法有问题：${bad.join(', ')}`);
 });
+
+test('Worker 部署前置检查：跑错目录时能识别出来并给出可操作的提示', async () => {
+  // 背景：wrangler 找不到 wrangler.toml 时不会说「配置在哪」，而是退回 autoconfig
+  // 去猜项目结构，猜不到静态目录就抛一句极易误导人的
+  //   Could not detect a directory containing static files (e.g. html, css and js)
+  // 实际原因往往是「在项目根目录之外执行了 wrangler」。这个前置检查就是为了
+  // 把这句话翻译成人话。
+  const { checkDeployPrerequisites, ROOT: PROJECT_ROOT } = await import(
+    '../tools/worker-preflight.js'
+  );
+
+  const okResult = checkDeployPrerequisites(PROJECT_ROOT);
+  assert.equal(okResult.ok, true, `在项目根目录应当通过，实际报：${okResult.problems.join('; ')}`);
+
+  // 一个确定不是项目根目录的路径
+  const wrongDir = path.join(PROJECT_ROOT, 'definitely-not-the-project-root');
+  const bad = checkDeployPrerequisites(wrongDir);
+  assert.equal(bad.ok, false, '在非项目目录里应当判定为不可部署');
+  assert.ok(
+    bad.problems.some((p) => p.includes('wrangler.toml')),
+    '应当指出缺的是哪些文件',
+  );
+  assert.ok(
+    bad.hints.some((h) => h.includes('cd ')),
+    '应当直接告诉用户该 cd 到哪个目录',
+  );
+  assert.ok(
+    bad.hints.some((h) => h.includes('Could not detect')),
+    '应当点名那个误导性的 wrangler 报错，让用户能把两者对上',
+  );
+});
+
+test('部署配置齐备：wrangler.toml 里的 assets 与 Durable Object 绑定都在', () => {
+  // 这些一旦写错，本地测试全绿但一部署就挂，所以单独立一条盯着。
+  const toml = fs.readFileSync(path.join(ROOT, 'wrangler.toml'), 'utf8');
+  for (const needle of [
+    '[assets]',
+    'directory = "./dist"',
+    'binding = "ASSETS"',
+    'main = "worker/index.js"',
+    '[[durable_objects.bindings]]',
+    'class_name = "RoomDurableObject"',
+    'name = "ROOMS"',
+    'new_sqlite_classes = ["RoomDurableObject"]',
+  ]) {
+    assert.ok(toml.includes(needle), `wrangler.toml 里缺少「${needle}」`);
+  }
+  // package.json 的部署脚本必须先自检、再构建、最后才调 wrangler
+  const pkg = JSON.parse(fs.readFileSync(path.join(ROOT, 'package.json'), 'utf8'));
+  assert.match(
+    pkg.scripts['worker:deploy'],
+    /worker-preflight\.js.*build-assets\.js.*wrangler deploy/,
+    'worker:deploy 的顺序应当是 自检 → 构建 → 部署',
+  );
+});
