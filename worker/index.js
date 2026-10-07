@@ -88,13 +88,9 @@ export default {
 
     /* ---------------- 静态资源 ---------------- */
 
-    const res = await env.ASSETS.fetch(request);
-    // Workers 静态资源默认不带缓存头；这几个文件不大，让浏览器短缓存一下
-    if (res.ok && /\.(css|js)$/.test(path)) {
-      const headers = new Headers(res.headers);
-      headers.set('cache-control', 'public, max-age=300');
-      return new Response(res.body, { status: res.status, headers });
-    }
-    return res;
+    // 静态资源的响应头（缓存策略）配置在 public/_headers 里。
+    // 注意：路径命中静态资源时 Cloudflare 不会调用这个 Worker，
+    // 所以在这里改 cache-control 是无效的 —— 必须在 _headers 里配。
+    return env.ASSETS.fetch(request);
   },
 };

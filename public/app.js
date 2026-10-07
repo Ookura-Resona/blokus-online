@@ -140,6 +140,10 @@ const app = {
   ws: null,
   connected: false,
   helloDone: false,
+  // 连上之后要不要立刻向服务端打招呼换身份。
+  // 页面加载时可能只是先把连接**预热**好（用户还在输昵称），那时不该打招呼，
+  // 否则会白白占住一个座位。点了「加入」才置为 true。
+  pendingHello: false,
   reconnectDelay: 800,
   reconnectTimer: null,
   shuttingDown: false,
@@ -173,6 +177,16 @@ function send(obj) {
   }
 }
 
+/**
+ * 向服务端打招呼换身份。服务端回 welcome 之后才会 joinRoom。
+ * 单独抽出来是因为它可能发生在两个时机：连接刚打开（正常流程），
+ * 或者连接早就预热好了、用户这时才点「加入」。
+ */
+function sendHello() {
+  app.pendingHello = false;
+  send({ t: C2S.HELLO, playerId, name: currentName() });
+}
+
 function setConn(state, text) {
   el.connBar.hidden = state === 'ok';
   el.connBar.classList.toggle('is-ok', state === 'ok');
@@ -201,7 +215,11 @@ function enterRoom(code) {
   el.inputCode.value = clean;
   closeResult();
   showScreen('room');
+  app.pendingHello = true;
   connect();
+  // 连接可能是页面加载时就预热好的（群里点开的邀请链接会走这条路），
+  // 那样握手早就做完了，直接打招呼即可，不用让用户再等两三个来回。
+  if (app.ws?.readyState === WebSocket.OPEN) sendHello();
   return true;
 }
 
@@ -242,8 +260,9 @@ function connect() {
     app.reconnectDelay = 800;
     setConn('ok', '已连接');
     el.connBar.hidden = true;
-    // 先 hello 拿到身份，服务端回 welcome 之后再 joinRoom
-    send({ t: C2S.HELLO, playerId, name: currentName() });
+    // 只在这条连接确实要用来进房间时才打招呼。
+    // 页面加载时预热的那种连接不打招呼，免得占住座位。
+    if (app.pendingHello) sendHello();
   });
 
   ws.addEventListener('message', (ev) => {
@@ -260,6 +279,8 @@ function connect() {
     app.connected = false;
     app.helloDone = false;
     if (app.shuttingDown || !app.roomCode) return;
+    // 重连之后要重新打招呼才能坐回原来的座位
+    app.pendingHello = true;
     setConn('bad', '连接断开，正在重连…');
     scheduleReconnect();
   });
@@ -1061,10 +1082,19 @@ window.__blokus = { app, board, send, showScreen, enterRoom, leaveRoom, disconne
 // 关页面时干净地断开，省得浏览器控制台里报一堆重连失败
 window.addEventListener('pagehide', disconnect);
 
-// 群里点开邀请链接：已经存过昵称就直接进，否则让他填个名字点一下
+// 群里点开邀请链接：**立刻开始建立连接**。
+//
+// WebSocket 握手要 2~3 个来回（TCP + TLS + 协议升级），网络差的时候能占掉
+// 一两秒钟。这段时间正好用来让用户输昵称 —— 等他们点「加入」时连接已经就绪，
+// 体感上就是"秒进"。
+//
+// 注意这时候**不打招呼**（pendingHello 还是 false），所以不会占座位；
+// 点了「加入」才会 hello + joinRoom。
 if (urlRoom) {
+  app.roomCode = urlRoom;
+  connect();
   if (savedName) {
-    enterRoom(urlRoom);
+    enterRoom(urlRoom); // 存过昵称，直接就进
   } else {
     el.homeHint.textContent = `填个昵称，点「加入」进入房间 ${urlRoom}`;
     el.inputName.focus();

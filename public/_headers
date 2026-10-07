@@ -1,0 +1,24 @@
+# Cloudflare 静态资源的响应头规则（Workers Assets / Pages 通用格式）。
+#
+# 为什么需要这个文件：Workers Assets 在路径命中静态资源时**不经过 Worker**，
+# 所以 worker/index.js 里改 cache-control 是没用的（那段代码根本不会执行）。
+# 静态资源的响应头只能在这里配。
+#
+# HTML 不长期缓存，保证部署后的改动能被看到；
+# JS/CSS 短缓存，避免每次刷新都把所有文件重新校验一遍。
+# 因为这些 URL 上没有版本号，max-age 不能设太长，否则发版后用户会拿到旧代码。
+
+/
+  Cache-Control: public, max-age=0, must-revalidate
+
+/app.js
+  Cache-Control: public, max-age=600
+
+/board.js
+  Cache-Control: public, max-age=600
+
+/style.css
+  Cache-Control: public, max-age=600
+
+/shared/*
+  Cache-Control: public, max-age=600
