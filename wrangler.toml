@@ -1,66 +1,39 @@
 # Cloudflare Workers 部署配置
 #
-#   npx wrangler dev     本地跑（不需要账号）
-#   npx wrangler deploy  部署到线上（需要免费 Cloudflare 账号）
-#
-# 免费额度（2026）：Workers 10 万请求/天；Durable Objects 10 万请求/天 + 13000 GB-s/天。
-# 一局四人棋约 70 手、每手广播 4 条消息，按计费 20:1 折算约 15 个请求、0.2 GB-s，
-# 每天玩几十局都碰不到额度的零头。
+#   npm run worker:dev      本地跑（不需要账号）
+#   npm run worker:deploy   部署到线上
 
 name = "blokus-online"
 main = "worker/index.js"
-
-# 用较新的兼容日期以启用当前默认行为
 compatibility_date = "2025-01-01"
 
-# ── 自定义域名 ──────────────────────────────────────────────
-# 为什么需要它：`*.workers.dev` 在中国大陆被 DNS 投毒 + TLS SNI 阻断
-# （实测：解析回 Facebook 的 IP；带 workers.dev SNI 的 TLS 握手被 RST），
-# 所以那个默认地址国内打不开。换成自己的域名就绕开了 —— 阻断是按域名做的。
-#
-# 前置条件：
-#   1) 域名已加到 Cloudflare 账号，且 NS 已改到 Cloudflare（状态变 Active）
-#   2) 在域名注册商处完成实名认证（国内域名要求，否则会是 serverHold）
-# 满足后 `wrangler deploy` 会自动创建对应的 DNS 记录并签发证书，不用手工加记录。
-#
-# 如果这个域名还没准备好，把下面两行注释掉也能正常部署到 workers.dev。
+# 自定义域名。国内无法访问 *.workers.dev，必须绑自己的域名
+# （域名需已加入 Cloudflare 且状态为 Active）。
+# 未准备好时注释掉这段，可照常部署到 workers.dev。
 routes = [
   { pattern = "blokus.ookura-resona.xyz", custom_domain = true },
 ]
 
-# 注意：这里**不需要** nodejs_compat。
-# shared/rooms.js 已经去掉了所有 node: 依赖（只用 globalThis.crypto），
-# 所以整个 Worker 侧没有任何 Node 内置模块。
-
-# ── 静态资源 ────────────────────────────────────────────────
-# dist/ 由 tools/build-assets.js 生成：public/ 的全部内容 +
-# 按 import 依赖自动扫出来的 shared/ 模块（服务端专用模块不会被带进来）。
+# 静态资源：dist/ 由 tools/build-assets.js 生成
 [assets]
 directory = "./dist"
 binding = "ASSETS"
-# 找不到就老老实实 404，不要回落到 index.html
 not_found_handling = "none"
 
-# 部署前自动构建静态资源
 [build]
 command = "node tools/build-assets.js"
 
-# ── Durable Objects ────────────────────────────────────────
-# 一个房号 = 一个 DO 实例，房间里的一切串行处理，天然没有并发竞争
+# 一个房号 = 一个 Durable Object
 [[durable_objects.bindings]]
 name = "ROOMS"
 class_name = "RoomDurableObject"
 
-# 免费版只能用 SQLite 后端的 Durable Object
 [[migrations]]
 tag = "v1"
 new_sqlite_classes = ["RoomDurableObject"]
 
-# ── 可调参数 ────────────────────────────────────────────────
 [vars]
-# AI 每步停顿（毫秒），让真人看得清
 AI_DELAY_MS = "650"
-# 轮到掉线玩家多久后自动托管（毫秒）
 OFFLINE_TAKEOVER_MS = "30000"
 
 [observability]
