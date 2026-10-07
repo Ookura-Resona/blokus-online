@@ -158,3 +158,14 @@ test('运行时（server/ 与 shared/）不使用 Node 20+ 才有的 API，保�
   }
   assert.deepEqual(problems, [], problems.join('\n'));
 });
+
+test('站内路径的大小写与磁盘完全一致（Windows 不区分大小写、Linux 区分）', async () => {
+  // 这是很隐蔽的一类部署事故：本机跑得好好的，一进 Docker 就 404 / MODULE_NOT_FOUND。
+  // 实现在 tools/check-case.js 里，这里直接复用，避免两套逻辑走偏。
+  const { findCaseProblems } = await import('../tools/check-case.js');
+  const problems = findCaseProblems();
+  assert.deepEqual(
+    problems.map((p) => `${p.file}: ${p.spec} → 磁盘上是 ${p.actual}`),
+    [],
+  );
+});

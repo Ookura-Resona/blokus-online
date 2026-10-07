@@ -427,7 +427,7 @@ npm test
 > npm run test:inproc
 > ```
 
-**105 个测试，全部通过**（`npm run test:inproc` 约 10 秒跑完）：
+**106 个测试，全部通过**（`npm run test:inproc` 约 10 秒跑完）：
 
 | 文件 | 数量 | 覆盖内容 |
 |---|---|---|
@@ -435,7 +435,7 @@ npm test
 | `test/rules.test.js` | 24 | 首子占角、同色只能角对角、**同色边接触被禁 vs 异色边接触放行**（同几何对照）、逆时针轮转、弃权与终局、序列化往返、整局自对局一致性 |
 | `test/scoring.test.js` | 22 | 名次与增减分、**同分后手优先**、统治力/全清奖励、阈值与开关可配置、二对二组队计分 |
 | `test/config.test.js` | 7 | `blokus.config.json` 的读取、嵌套覆盖、环境变量优先级、损坏文件回退、注释键剔除 |
-| `test/ui.test.js` | 10 | **HTML/CSS/JS 的静态一致性**：JS 引用的 id 都存在、id 不重复、`hidden` 兜底规则、外链 CDN 检查、Canvas API typo 检查、Node 18 兼容性守卫 |
+| `test/ui.test.js` | 11 | **HTML/CSS/JS 的静态一致性**：JS 引用的 id 都存在、id 不重复、`hidden` 兜底规则、外链 CDN 检查、Canvas API typo 检查、Node 18 兼容性守卫、**站内路径大小写**（Windows 不区分、Linux 区分，写错就一部署就挂） |
 | `test/ws.test.js` | 14 | 用**独立实现**的客户端校验握手应答值（对上 RFC 6455 官方向量）、7/16/64 位长度、分片拼装、ping/pong、掩码缺失报 1002、超长报 1009 |
 | `test/room.test.js` | 15 | 建房/加入/座位/房主权限/聊天；**两个真实 WebSocket 客户端把整局打完**；非法落子不被接受；离线托管 |
 | `test/web.test.js` | 1 | **加载真实 `index.html` + `app.js` + `board.js`**，连真实服务器，全程只点 UI，把混战和二对二各打完一整局并校验结算浮层 |
@@ -454,13 +454,13 @@ npm test
 ### 另外两个自检工具
 
 ```bash
-node tools/check-encoding.js             # 全部源码是否为无 BOM 的合法 UTF-8（中文项目必查）
+node tools/check-encoding.js             # 全部源码是否为合法 UTF-8（含 .ps1 需要 BOM 的特例）
+node tools/check-case.js                 # 站内路径大小写（Windows 不区分、Linux 区分）
 node tools/smoke.js                      # 对运行中的服务器做端到端冒烟检查
 node tools/smoke.js 10.0.0.5:8080        # 也可以检查远程服务器
 ```
 
-`smoke.js` 会检查静态资源、路径穿越防护、`/api/config`，并用两条真实 WebSocket 连接把一整局打完核对结算。
-两个一起跑：`npm run check`。
+三个一起跑：`npm run check`。
 
 ### 渲染预览与逐格核对：把真实绘制指令重放成图片
 
